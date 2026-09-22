@@ -1,0 +1,36 @@
+Glam Velvet Sofa 3D model
+Copyright 2021 Wayfair, LLC. Model and textures by Eric Chadwick.
+Source: https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/GlamVelvetSofa
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+The original GLB is used in the Aura Tiles demonstration showroom. Placement and scale are adjusted at runtime. Aura Tiles is not affiliated with Wayfair or the asset creators.
+
+Modern Coffee Table 01 3D model and textures
+Author: Amin. Source: https://polyhaven.com/a/modern_coffee_table_01
+License: CC0 1.0 Universal. https://creativecommons.org/publicdomain/zero/1.0/
+The 1K glTF variant is used in the demonstration showroom.
+
+Modern Arm Chair 01 3D model and textures
+Author: Vibrant Nordic. Source: https://polyhaven.com/a/modern_arm_chair_01
+License: CC0 1.0 Universal. The 1K glTF variant is used in the living room.
+
+Wood Floor scanned material
+Author: Dimitrios Savva. Source: https://polyhaven.com/a/wood_floor
+License: CC0 1.0 Universal. The 1K diffuse, normal, and roughness maps are used.
+
+Interior Tiles scanned material
+Author: Charlotte Baglioni. Source: https://polyhaven.com/a/interior_tiles
+License: CC0 1.0 Universal. The 1K diffuse, normal, and roughness maps are used.
+
+Courtyard and Botanical framed photographic artwork
+Generated for this Aura Tiles demonstration showroom using OpenAI image generation.
+Files: /art/courtyard.png and /art/botanical.png.
+
+Material reference images and HDR environment
+30 scanned material images and Modern Bathroom 2K HDRI are sourced from Poly Haven.
+Poly Haven assets are licensed CC0 1.0 Universal. https://polyhaven.com
+The HDRI is used for lighting and reflections only; it is not shown as the house background.
+
+Modern Ceiling Lamp 01 3D model and textures
+Author: Nimitz. Source: https://polyhaven.com/a/modern_ceiling_lamp_01
+License: CC0 1.0 Universal. The 1K glTF variant is used as the ceiling fixture in all four rooms.

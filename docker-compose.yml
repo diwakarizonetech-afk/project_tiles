@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: alpha_tiles
+      POSTGRES_USER: alpha_tiles
+      POSTGRES_PASSWORD: alpha_tiles
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alpha_tiles -d alpha_tiles"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://alpha_tiles:alpha_tiles@db:5432/alpha_tiles
+      UPLOAD_DIR: /app/uploads
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "8000:8000"
+    volumes:
+      - tile_uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  postgres_data:
+  tile_uploads:
