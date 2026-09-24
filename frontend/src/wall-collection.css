@@ -1,0 +1,7 @@
+.wall-collection-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px}
+.wall-target{padding:14px;background:#e7f2ee;border:1px solid #b9d5cc;margin:12px 0;color:#254e43}
+.wall-target p{font-size:12px;line-height:1.6;margin:0 0 12px}
+.wall-target label{display:flex;align-items:center;gap:12px;font-size:11px;flex-wrap:wrap}
+.wall-target select{max-width:100%;padding:9px;background:#fffdf8;border:1px solid #85b4a5;color:#254e43}
+.topbar nav{margin-left:20px;gap:20px}
+@media(max-width:1050px){.topbar nav{gap:12px;margin-left:10px}}

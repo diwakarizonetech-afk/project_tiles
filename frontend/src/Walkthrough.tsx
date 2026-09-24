@@ -1,33 +1,36 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
+import './graphics-fallback.css'
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Maximize2, RotateCcw } from 'lucide-react'
-import { buildHouse, roomAt, viewpoints, type WallStyle } from './house'
-import { roomNames, type Tile } from './catalog'
+import type { WallStyle } from './house'
+import { buildImportedHouse, importedRoomAt as roomAt, importedViewpoints as viewpoints } from './importedHouse'
+import { roomNames, sampleUrl, type Tile } from './catalog'
 
 export type ViewHandle = { enter:()=>void; goTo:(room:number)=>void; reset:()=>void; enterVR:()=>Promise<void>; fullscreen:()=>void }
-type Props = { selected:Tile[]; wallStyles:WallStyle[]; walking:boolean; stereo:boolean; brightness:number; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onWalking:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
+type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:WallStyle[]; walking:boolean; stereo:boolean; brightness:number; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onWalking:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
 type Runtime = { goTo:(room:number)=>void; reset:()=>void; enter:()=>void; vr:()=>Promise<void>; apply:(room:number,tile:Tile)=>void; styleWall:(wall:number,style:WallStyle)=>void; renderer:THREE.WebGLRenderer }
 
 export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props,ref){
   const host=useRef<HTMLDivElement>(null);const runtime=useRef<Runtime|null>(null);const live=useRef(props);const lastApplied=useRef(props.selected);live.current=props
+  const [attempt,setAttempt]=useState(0)
   const movement=useRef({x:0,z:0});const [error,setError]=useState('');const [position,setPosition]=useState({x:-1.7,z:6.7,yaw:.57});const [locked,setLocked]=useState(false)
   useImperativeHandle(ref,()=>({
     enter:()=>runtime.current?.enter(),goTo:(i)=>runtime.current?.goTo(i),reset:()=>runtime.current?.reset(),
     enterVR:async()=>{await runtime.current?.vr()},fullscreen:()=>{const el=host.current?.parentElement;if(document.fullscreenElement)void document.exitFullscreen();else void el?.requestFullscreen().catch(()=>live.current.onNotice('Fullscreen is unavailable in this browser.'))},
   }),[])
   useEffect(()=>{
-    const element=host.current!;let renderer:THREE.WebGLRenderer
+    setError('');const element=host.current!;let renderer:THREE.WebGLRenderer
     try {renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'default'})}catch {setError('This browser could not start 3D. Enable hardware acceleration or open this page in a WebGL-capable browser.');return}
     // A conservative pixel cap avoids WebGL context loss on integrated GPUs and VR browsers.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.25));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.BasicShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.AgXToneMapping;renderer.toneMappingExposure=1.08;renderer.xr.enabled=true
     element.appendChild(renderer.domElement);renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Interactive 3D house. Drag to look. Enter walkthrough, then use W A S D or the arrow keys to move.');renderer.domElement.setAttribute('role','application')
-    const house=buildHouse(renderer);const camera=new THREE.PerspectiveCamera(68,1,.07,140);const rig=new THREE.Group();rig.add(camera);house.scene.add(rig);camera.rotation.order='YXZ'
+    const house=buildImportedHouse(renderer);const camera=new THREE.PerspectiveCamera(68,1,.07,140);const rig=new THREE.Group();rig.add(camera);house.scene.add(rig);camera.rotation.order='YXZ'
     const stereoCamera=new THREE.StereoCamera();stereoCamera.eyeSep=.064
     const keys=new Set<string>();let pitch=-.14,last=0,uiTime=0,previousRoom=-1,disposed=false,width=1,height=1;let dragging=false,oldX=0,oldY=0
     const goTo=(i:number)=>{const p=viewpoints[i];rig.position.set(p.x,0,p.z);rig.rotation.y=p.yaw;pitch=p.pitch;if(!renderer.xr.isPresenting){camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0)}live.current.onRoom(i)}
     goTo(0)
-    props.selected.forEach((tile,i)=>house.applyTile(i,tile))
-    props.wallStyles.forEach((style,i)=>house.setWallStyle(i,style))
+    live.current.selected.forEach((tile,i)=>house.applyTile(i,tile))
+    live.current.wallStyles.forEach((style,i)=>house.setWallStyle(i,style))
     function resize(){width=element.clientWidth;height=element.clientHeight;renderer.setSize(width,height);camera.aspect=width/height;camera.updateProjectionMatrix()}
     const observer=new ResizeObserver(resize);observer.observe(element);resize()
     function clear(){keys.clear();movement.current={x:0,z:0};dragging=false}
@@ -42,7 +45,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     function pointerDown(event:PointerEvent){if(document.pointerLockElement===renderer.domElement){const rect=renderer.domElement.getBoundingClientRect();chooseWall(rect.left+rect.width/2,rect.top+rect.height/2);return}dragging=true;oldX=pointerStartX=event.clientX;oldY=pointerStartY=event.clientY;renderer.domElement.setPointerCapture(event.pointerId);renderer.domElement.focus({preventScroll:true})}
     function pointerMove(event:PointerEvent){if(dragging&&document.pointerLockElement!==renderer.domElement){look(event.clientX-oldX,event.clientY-oldY);oldX=event.clientX;oldY=event.clientY}}
     function pointerUp(event:PointerEvent){if(dragging&&Math.hypot(event.clientX-pointerStartX,event.clientY-pointerStartY)<7)chooseWall(event.clientX,event.clientY);dragging=false}
-    function contextLost(event:Event){event.preventDefault();setError('3D graphics paused while your device frees graphics memory. The showroom will try to recover automatically.')}
+    function contextLost(event:Event){event.preventDefault();clear();live.current.onWalking(false);setError('3D graphics paused while your device frees graphics memory. The showroom will try to recover automatically.')}
     function contextRestored(){setError('');resize();live.current.onNotice('3D graphics restored.')}
     window.addEventListener('keydown',keyDown);window.addEventListener('keyup',keyUp);window.addEventListener('blur',clear);document.addEventListener('visibilitychange',clear);document.addEventListener('pointerlockchange',lockChange);document.addEventListener('mousemove',mouseMove)
     renderer.domElement.addEventListener('pointerdown',pointerDown);renderer.domElement.addEventListener('pointermove',pointerMove);renderer.domElement.addEventListener('pointerup',pointerUp);renderer.domElement.addEventListener('pointercancel',pointerUp);renderer.domElement.addEventListener('webglcontextlost',contextLost);renderer.domElement.addEventListener('webglcontextrestored',contextRestored)
@@ -60,21 +63,21 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     const direction=new THREE.Vector3();let snapReady=true
     function move(dx:number,dz:number,dt:number){const length=Math.hypot(dx,dz);if(length<.05)return;if(length>1){dx/=length;dz/=length}let yaw=rig.rotation.y;if(renderer.xr.isPresenting){camera.getWorldDirection(direction);yaw=Math.atan2(-direction.x,-direction.z)}const speed=2.5*dt;const x=(dx*Math.cos(yaw)+dz*Math.sin(yaw))*speed;const z=(-dx*Math.sin(yaw)+dz*Math.cos(yaw))*speed;if(house.canStand(rig.position.x+x,rig.position.z))rig.position.x+=x;if(house.canStand(rig.position.x,rig.position.z+z))rig.position.z+=z}
     renderer.setAnimationLoop((time)=>{
-      if(disposed)return;const dt=Math.min((time-last)/1000,.033);last=time;renderer.toneMappingExposure=live.current.brightness
+      if(disposed||renderer.getContext().isContextLost()||document.hidden)return;const dt=Math.min((time-last)/1000,.033);last=time;renderer.toneMappingExposure=live.current.brightness
       if(live.current.walking&&!document.querySelector('[role="dialog"]'))move((keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0)+movement.current.x,(keys.has('KeyS')||keys.has('ArrowDown')?1:0)-(keys.has('KeyW')||keys.has('ArrowUp')?1:0)+movement.current.z,dt)
       if(renderer.xr.isPresenting){const session=renderer.xr.getSession();let turning=0;for(const source of session?.inputSources??[]){const axes=source.gamepad?.axes;if(axes&&axes.length>=4){if(source.handedness==='left')move(axes[2],axes[3],dt);else turning=axes[2]}}if(Math.abs(turning)>.7&&snapReady){rig.rotation.y-=Math.sign(turning)*Math.PI/6;snapReady=false}if(Math.abs(turning)<.3)snapReady=true;const hit=floorHit(controllers[0])??floorHit(controllers[1]);teleport.visible=!!hit;if(hit)teleport.position.set(hit.x,.02,hit.z)}
       const current=roomAt(rig.position.x,rig.position.z);if(current!==previousRoom){live.current.onRoom(current);previousRoom=current}if(time-uiTime>140){setPosition({x:rig.position.x,z:rig.position.z,yaw:rig.rotation.y});uiTime=time}
       if(live.current.stereo&&!renderer.xr.isPresenting){camera.aspect=width/height;camera.updateProjectionMatrix();house.scene.updateMatrixWorld();stereoCamera.update(camera);renderer.setScissorTest(true);renderer.setViewport(0,0,width/2,height);renderer.setScissor(0,0,width/2,height);renderer.render(house.scene,stereoCamera.cameraL);renderer.setViewport(width/2,0,width/2,height);renderer.setScissor(width/2,0,width/2,height);renderer.render(house.scene,stereoCamera.cameraR);renderer.setScissorTest(false)}else{renderer.setViewport(0,0,width,height);renderer.render(house.scene,camera)}
     })
     live.current.onReady()
-    return()=>{disposed=true;runtime.current=null;renderer.setAnimationLoop(null);void renderer.xr.getSession()?.end();if(document.pointerLockElement===renderer.domElement)document.exitPointerLock();observer.disconnect();window.removeEventListener('keydown',keyDown);window.removeEventListener('keyup',keyUp);window.removeEventListener('blur',clear);document.removeEventListener('visibilitychange',clear);document.removeEventListener('pointerlockchange',lockChange);document.removeEventListener('mousemove',mouseMove);renderer.domElement.removeEventListener('webglcontextlost',contextLost);renderer.domElement.removeEventListener('webglcontextrestored',contextRestored);controllers.forEach((c,i)=>c.removeEventListener('select',selectCallbacks[i]));renderer.xr.removeEventListener('sessionstart',onStart);renderer.xr.removeEventListener('sessionend',onEnd);house.dispose();renderer.dispose();element.replaceChildren()}
-  },[])
+    return()=>{disposed=true;runtime.current=null;renderer.setAnimationLoop(null);void renderer.xr.getSession()?.end();if(document.pointerLockElement===renderer.domElement)document.exitPointerLock();observer.disconnect();window.removeEventListener('keydown',keyDown);window.removeEventListener('keyup',keyUp);window.removeEventListener('blur',clear);document.removeEventListener('visibilitychange',clear);document.removeEventListener('pointerlockchange',lockChange);document.removeEventListener('mousemove',mouseMove);renderer.domElement.removeEventListener('webglcontextlost',contextLost);renderer.domElement.removeEventListener('webglcontextrestored',contextRestored);controllers.forEach((c,i)=>c.removeEventListener('select',selectCallbacks[i]));renderer.xr.removeEventListener('sessionstart',onStart);renderer.xr.removeEventListener('sessionend',onEnd);house.dispose();renderer.dispose();renderer.forceContextLoss();element.replaceChildren()}
+  },[attempt])
   useEffect(()=>{if(lastApplied.current===props.selected)return;lastApplied.current=props.selected;props.selected.forEach((tile,i)=>runtime.current?.apply(i,tile))},[props.selected])
   useEffect(()=>{props.wallStyles.forEach((style,i)=>runtime.current?.styleWall(i,style))},[props.wallStyles])
   useEffect(()=>{if(!props.walking){movement.current={x:0,z:0};if(document.pointerLockElement)document.exitPointerLock()}},[props.walking])
   const hold=(x:number,z:number)=>({onPointerDown:(event:React.PointerEvent<HTMLButtonElement>)=>{event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);movement.current={x,z}},onPointerUp:()=>{movement.current={x:0,z:0}},onPointerCancel:()=>{movement.current={x:0,z:0}},onLostPointerCapture:()=>{movement.current={x:0,z:0}}})
-  return <><div className="three-host" ref={host}/>{error&&<div className="graphics-error" role="alert">{error}<button onClick={()=>location.reload()}>Reload showroom</button></div>}
-    {!error&&<div className="floorplan" aria-label={`Your location: ${roomNames[roomAt(position.x,position.z)]}`}><span>THE RESIDENCE</span><svg viewBox="0 0 160 160" role="img" aria-label="Live floor plan"><rect x="3" y="3" width="154" height="154" fill="#f5f0e5" stroke="#8c887f"/><path d="M80 3v27m0 26v48m0 27v26M3 80h27m26 0h48m27 0h26" stroke="#8c887f" strokeWidth="3"/>{['SUITE','BATH','LIVING','KITCHEN'].map((r,i)=><text key={r} x={i%2?120:40} y={i<2?42:123}>{r}</text>)}<g transform={`translate(${80+position.x*9.5} ${80+position.z*9.5}) rotate(${-position.yaw*180/Math.PI})`}><path d="M0 -13L-8 1L8 1Z" fill="#79917b" opacity=".35"/><circle r="4" fill="#44614c" stroke="white" strokeWidth="1.5"/></g></svg><small>Connected rooms · live position</small></div>}
+  return <><div className="three-host" ref={host}/>{error&&<div className="graphics-error material-fallback" role="status"><div className="fallback-sample"><img src={sampleUrl(props.selected[roomAt(position.x,position.z)])} alt="Selected tile texture preview"/><span>2D MATERIAL PREVIEW</span></div><div className="fallback-copy"><p>MJP CERAMICS / MATERIAL STUDIO</p><h2>Your next favourite surface.</h2><p>3D is temporarily unavailable on this device. You can still explore tile designs and upload your own.</p><strong>{props.selected[roomAt(position.x,position.z)].name}</strong><div className="fallback-actions"><button onClick={props.onBrowse}>Explore tile collections</button><button onClick={()=>setAttempt(n=>n+1)}>Try 3D again</button></div><small>For 3D, enable browser graphics acceleration and close unused 3D tabs.</small></div></div>}
+    {!error&&<div className="floorplan" aria-label={`Your location: ${roomNames[roomAt(position.x,position.z)]}`}><span>THE INTERIORS</span><svg viewBox="0 0 160 160" role="img" aria-label="Imported interior selector">{roomNames.map((label,i)=><g key={label}><rect x={i%2?83:5} y={9+Math.floor(i/2)*36} width="72" height="27" rx="2" fill={roomAt(position.x,position.z)===i?'#d9c28a':'#f5f0e5'} stroke="#8c887f"/><text x={i%2?119:41} y={26+Math.floor(i/2)*36}>{String(i+1).padStart(2,'0')}</text></g>)}</svg><small>{roomNames[roomAt(position.x,position.z)]}</small></div>}
     {props.walking&&<><span className="crosshair" aria-hidden="true">+</span><div className="walk-help">{locked?'W A S D to walk · Mouse to look · Esc to release':'Drag to look · W A S D / arrows to walk'}<button aria-label="Reset room viewpoint" onClick={()=>runtime.current?.reset()}><RotateCcw size={15}/></button></div><div className="move-pad" aria-label="Movement controls"><button className="forward" aria-label="Walk forward" {...hold(0,-1)}><ArrowUp/></button><button aria-label="Walk left" {...hold(-1,0)}><ArrowLeft/></button><button aria-label="Walk backward" {...hold(0,1)}><ArrowDown/></button><button aria-label="Walk right" {...hold(1,0)}><ArrowRight/></button></div></>}
     {props.stereo&&<div className="stereo-divider"><span>STEREO PREVIEW</span></div>}
   </>

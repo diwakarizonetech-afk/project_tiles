@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .config import ALLOWED_IMAGE_TYPES, CORS_ORIGINS, MAX_UPLOAD_BYTES, UPLOAD_DIR, VR_ALLOWED_ORIGINS, VR_DEFAULT_MOVEMENT_SPEED, VR_ENABLED, VR_REQUIRE_HTTPS, VR_ROOM_SCALE, VR_TELEPORT_ENABLED
+from .config import ALLOWED_IMAGE_TYPES, CATALOG_DIR, CORS_ORIGINS, MAX_UPLOAD_BYTES, UPLOAD_DIR, VR_ALLOWED_ORIGINS, VR_DEFAULT_MOVEMENT_SPEED, VR_ENABLED, VR_REQUIRE_HTTPS, VR_ROOM_SCALE, VR_TELEPORT_ENABLED
 from .database import Base, engine, get_db
 from .models import TileDesign
 from .schemas import TileDesignOut, VrSettingsOut
@@ -25,12 +25,15 @@ async def lifespan(_: FastAPI):
     yield
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+CATALOG_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="MJP Ceramics API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=False, allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/catalog", StaticFiles(directory=CATALOG_DIR), name="catalog")
 
 def serialize(design: TileDesign, request: Request) -> TileDesignOut:
-    return TileDesignOut(code=design.code, name=design.name, family=design.family, finish=design.finish, surface=design.surface, image_url=str(request.base_url).rstrip("/") + design.image_path, created_at=design.created_at)
+    base=str(request.base_url).rstrip("/")
+    return TileDesignOut(code=design.code,name=design.name,family=design.family,finish=design.finish,surface=design.surface,image_url=base+design.image_path,color=design.color,vein=design.vein,size=design.size,normal_url=base+design.normal_path if design.normal_path else None,roughness_url=base+design.roughness_path if design.roughness_path else None,texture_repeat=design.texture_repeat,sort_order=design.sort_order,built_in=design.built_in,created_at=design.created_at)
 
 @app.get("/api/health")
 def health():
@@ -50,7 +53,7 @@ def vr_settings():
 
 @app.get("/api/tile-designs", response_model=list[TileDesignOut])
 def list_tile_designs(request: Request, db: Session = Depends(get_db)):
-    designs = db.scalars(select(TileDesign).order_by(TileDesign.created_at.desc())).all()
+    designs = db.scalars(select(TileDesign).order_by(TileDesign.sort_order,TileDesign.created_at)).all()
     return [serialize(design, request) for design in designs]
 
 @app.post("/api/tile-designs", response_model=TileDesignOut, status_code=status.HTTP_201_CREATED)
@@ -78,7 +81,7 @@ async def create_tile_design(
     filename = f"{uuid4().hex}{extension}"
     target = UPLOAD_DIR / filename
     target.write_bytes(payload)
-    design = TileDesign(code=code, name=name.strip(), family=family, finish=finish.strip() or "Matt", surface=surface, image_path=f"/uploads/{filename}")
+    design = TileDesign(code=code,name=name.strip(),family=family,finish=finish.strip() or "Matt",surface=surface,image_path=f"/uploads/{filename}",color="#d8d4cb",vein="#7e786f",size="Custom size",texture_repeat=2.5,sort_order=1000,built_in=False)
     db.add(design)
     try:
         db.commit()
@@ -94,6 +97,8 @@ def delete_tile_design(code: str, db: Session = Depends(get_db)):
     design = db.get(TileDesign, code.upper())
     if not design:
         raise HTTPException(status_code=404, detail="Tile design not found.")
+    if design.built_in:
+        raise HTTPException(status_code=403, detail="Built-in catalog tiles cannot be deleted.")
     image = UPLOAD_DIR / Path(design.image_path).name
     db.delete(design)
     db.commit()

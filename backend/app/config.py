@@ -6,6 +6,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / '.env')
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://alpha_tiles:alpha_tiles@db:5432/alpha_tiles")
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads")).resolve()
+CATALOG_DIR = Path(os.getenv("CATALOG_DIR", Path(__file__).resolve().parents[1] / "catalog")).resolve()
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()]

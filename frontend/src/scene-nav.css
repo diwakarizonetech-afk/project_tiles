@@ -1,0 +1,21 @@
+.live-viewer .room-nav{max-width:min(80vw,980px)}
+.live-viewer .room-nav>div{display:flex;flex-wrap:wrap;gap:6px}
+.live-viewer .room-nav button{white-space:nowrap}
+.live-viewer .title-block{top:92px}
+.live-viewer .title-block h1{font-size:clamp(46px,4.4vw,64px)}
+.live-viewer .title-block .subcopy{margin-top:14px}
+.live-viewer .enter-button{margin-top:17px}
+@media(max-height:760px) and (min-width:801px){
+  .live-viewer .title-block{top:72px}
+  .live-viewer .title-block h1{font-size:clamp(43px,4vw,58px)}
+  .live-viewer .title-block .eyebrow{margin-bottom:14px}
+  .live-viewer .title-block .subcopy{margin-top:10px;line-height:1.5}
+  .live-viewer .enter-button{margin-top:12px;padding:12px 16px}
+  .live-viewer .room-nav{bottom:18px}
+  .live-viewer .daylight-control{bottom:20px}
+}
+@media(max-width:800px){
+  .live-viewer .room-nav{max-width:calc(100vw - 30px)}
+  .live-viewer .room-nav button{padding:8px 9px}
+  .live-viewer .room-nav-note{display:none}
+}
