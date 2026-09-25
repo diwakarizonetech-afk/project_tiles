@@ -132,7 +132,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
         // from world X/Z so every backend texture is visible at a true scale.
         const source=object.geometry,geometry=source.clone(),position=geometry.getAttribute('position'),bounds=new THREE.Box3().setFromObject(object),size=bounds.getSize(new THREE.Vector3()),point=new THREE.Vector3(),uv=new Float32Array(position.count*2)
         for(let vertex=0;vertex<position.count;vertex++){point.fromBufferAttribute(position,vertex).applyMatrix4(object.matrixWorld);uv[vertex*2]=(point.x-bounds.min.x)/Math.max(size.x,.001);uv[vertex*2+1]=(point.z-bounds.min.z)/Math.max(size.z,.001)}
-        geometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));object.geometry=geometry;geometries.add(geometry);object.material=floorMaterial;object.receiveShadow=true
+        geometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));object.geometry=geometry;geometries.add(geometry);object.material=floorMaterial;object.receiveShadow=true;object.userData.floorRoom=index
       });floor.visible=false}
       const fill=new THREE.PointLight(index===0?'#ffe0ad':'#fff0d7',index===0?5:3.7,8,2);fill.position.set(0,2.45,.4);group.add(fill)
       resolve()
@@ -181,8 +181,14 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       if(normal)material.normalScale.set(.5,.5)
     }).catch(error=>console.error(`Could not load wall tile for wall ${wall}`,error))
   }
-  function pickWall(raycaster:THREE.Raycaster){const hit=raycaster.intersectObjects(wallMeshes,false)[0];return typeof hit?.object.userData.wallId==='number'?hit.object.userData.wallId:null}
+  function pickSurface(raycaster:THREE.Raycaster){
+    const floors=floorTargets.flat().concat(floorMeshes.filter(mesh=>mesh.visible))
+    const hit=raycaster.intersectObjects([...wallMeshes,...floors],false)[0]
+    if(typeof hit?.object.userData.wallId==='number')return {kind:'wall' as const,id:hit.object.userData.wallId as number}
+    const floorRoom=hit?.object.userData.floorRoom??hit?.object.userData.room
+    return typeof floorRoom==='number'?{kind:'floor' as const,id:floorRoom as number}:null
+  }
   function canStand(x:number,z:number){const room=importedRoomAt(x,z),entry=interiors[room];return Math.abs(x)<entry.walkX&&Math.abs(z-centres[room])<entry.walkZ}
   function dispose(){disposed=true;geometries.forEach(geometry=>geometry.dispose());materials.forEach(material=>material.dispose());textures.forEach(texture=>texture.dispose());cachedTextures.forEach(texture=>texture.dispose());wallMaps.forEach(texture=>texture?.dispose());wallDetailMaps.forEach(maps=>maps.forEach(texture=>texture.dispose()));floorMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});wallMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});environment?.dispose()}
-  return {scene,applyTile,setWallStyle,pickWall,canStand,floorMeshes,dispose}
+  return {scene,applyTile,setWallStyle,pickSurface,canStand,floorMeshes,dispose}
 }

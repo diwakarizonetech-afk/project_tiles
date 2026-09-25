@@ -1,10 +1,9 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 import re
-from uuid import uuid4
-
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -56,6 +55,17 @@ def list_tile_designs(request: Request, db: Session = Depends(get_db)):
     designs = db.scalars(select(TileDesign).order_by(TileDesign.sort_order,TileDesign.created_at)).all()
     return [serialize(design, request) for design in designs]
 
+@app.get("/api/tile-designs/{code}/image")
+def tile_design_image(code: str, db: Session = Depends(get_db)):
+    design = db.get(TileDesign, code.upper())
+    if not design or not design.image_data:
+        raise HTTPException(status_code=404, detail="Tile image not found.")
+    return Response(
+        content=design.image_data,
+        media_type=design.image_content_type or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
 @app.post("/api/tile-designs", response_model=TileDesignOut, status_code=status.HTTP_201_CREATED)
 async def create_tile_design(
     request: Request,
@@ -78,17 +88,30 @@ async def create_tile_design(
     payload = await image.read()
     if not payload or len(payload) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Image must be between 1 byte and 5 MB.")
-    filename = f"{uuid4().hex}{extension}"
-    target = UPLOAD_DIR / filename
-    target.write_bytes(payload)
-    design = TileDesign(code=code,name=name.strip(),family=family,finish=finish.strip() or "Matt",surface=surface,image_path=f"/uploads/{filename}",color="#d8d4cb",vein="#7e786f",size="Custom size",texture_repeat=2.5,sort_order=1000,built_in=False)
+    existing = db.get(TileDesign, code)
+    if existing:
+        if existing.built_in:
+            raise HTTPException(status_code=409, detail=f"Tile code {code} belongs to the built-in catalog.")
+        legacy_image = UPLOAD_DIR / Path(existing.image_path).name if existing.image_path.startswith("/uploads/") else None
+        existing.name = name.strip()
+        existing.family = family
+        existing.finish = finish.strip() or "Matt"
+        existing.surface = surface
+        existing.image_path = f"/api/tile-designs/{code}/image"
+        existing.image_data = payload
+        existing.image_content_type = image.content_type
+        db.commit()
+        db.refresh(existing)
+        if legacy_image:
+            legacy_image.unlink(missing_ok=True)
+        return serialize(existing, request)
+    design = TileDesign(code=code,name=name.strip(),family=family,finish=finish.strip() or "Matt",surface=surface,image_path=f"/api/tile-designs/{code}/image",image_data=payload,image_content_type=image.content_type,color="#d8d4cb",vein="#7e786f",size="Custom size",texture_repeat=2.5,sort_order=1000,built_in=False)
     db.add(design)
     try:
         db.commit()
         db.refresh(design)
     except IntegrityError:
         db.rollback()
-        target.unlink(missing_ok=True)
         raise HTTPException(status_code=409, detail=f"Tile code {code} already exists.")
     return serialize(design, request)
 
@@ -99,7 +122,8 @@ def delete_tile_design(code: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Tile design not found.")
     if design.built_in:
         raise HTTPException(status_code=403, detail="Built-in catalog tiles cannot be deleted.")
-    image = UPLOAD_DIR / Path(design.image_path).name
+    image = UPLOAD_DIR / Path(design.image_path).name if design.image_path.startswith("/uploads/") else None
     db.delete(design)
     db.commit()
-    image.unlink(missing_ok=True)
+    if image:
+        image.unlink(missing_ok=True)

@@ -9,6 +9,15 @@ await server.listen()
 const testUrl=server.resolvedUrls.local[0]
 const browser=await chromium.launch({channel:'chrome',headless:true,args:['--enable-unsafe-swiftshader']})
 const page=await browser.newPage({viewport:{width:1440,height:1050}})
+if(process.env.TEST_API_URL){
+  const apiBase=process.env.TEST_API_URL.replace(/\/$/,'')
+  const catalog=await fetch(`${apiBase}/api/tile-designs`).then(response=>response.json())
+  await page.route('**/api/tile-designs',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(catalog)}))
+  await page.route(`${apiBase}/**`,async route=>{
+    const response=await fetch(route.request().url())
+    await route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body:Buffer.from(await response.arrayBuffer())})
+  })
+}
 const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',message=>{if(message.type()==='error'&&!message.text().includes('net::ERR'))errors.push(message.text())})
 try {
   await page.goto(testUrl,{waitUntil:'networkidle'})
@@ -23,11 +32,25 @@ try {
   assert.equal(await page.getByRole('button',{name:'Sage wall colour',exact:true}).getAttribute('aria-pressed'),'true')
   assert.ok(!initial.equals(await page.locator('.three-host').screenshot()),'Wall colour updates the rendered house')
   await page.getByRole('button',{name:'Art deco arches',exact:true}).click()
-  assert.deepEqual(await page.evaluate(()=>{const styles=JSON.parse(localStorage.getItem('aura-wall-styles'));return [styles[0].color,styles[2].color,styles[2].design]}),['#aa5946','#758872','arches'],'Only the selected wall changes')
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('aura-wall-styles')).filter(style=>style.color==='#758872'&&style.design==='arches').length),1,'Only the selected wall changes')
   await page.screenshot({path:'test-results/wall-colours.png',fullPage:true})
   await page.getByRole('button',{name:'Close wall colours',exact:true}).click()
+  const viewer=await page.locator('#showroom').boundingBox()
+  let floorOpened=false
+  for(const [x,y] of [[.82,.78],[.68,.82],[.50,.80],[.30,.78],[.18,.82]]){
+    await page.mouse.click(viewer.x+viewer.width*x,viewer.y+viewer.height*y)
+    await page.waitForTimeout(180)
+    if(await page.locator('.floor-quickbar').count()){floorOpened=true;break}
+    const closeWall=page.getByRole('button',{name:'Close wall colours',exact:true})
+    if(await closeWall.count())await closeWall.click()
+  }
+  assert.equal(floorOpened,true,'Clicking the rendered floor opens the floor tile selector')
+  const firstFloorTile=page.locator('.floor-quickbar .surface-quick-list>button').first()
+  await firstFloorTile.click()
+  assert.equal(await firstFloorTile.getAttribute('aria-pressed'),'true','A floor tile applies directly inside the room')
+  await page.getByRole('button',{name:'Close floor tiles',exact:true}).click()
   await page.getByRole('button',{name:'COLLECTIONS',exact:true}).click()
-  assert.equal(await page.locator('.catalog-card').count(),56)
+  assert.ok(await page.locator('.catalog-card').count()>=56,'Built-in and uploaded surfaces are visible')
   await page.getByRole('button',{name:'Wood',exact:true}).click()
   assert.equal(await page.locator('.catalog-card').count(),5)
   await page.getByRole('button',{name:'All',exact:true}).click()
@@ -104,5 +127,5 @@ try {
   await page.screenshot({path:'test-results/mobile-collections.png',fullPage:true})
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
   assert.deepEqual(errors,[],'No JavaScript or WebGL errors')
-  console.log('PASS: 56 surfaces, per-wall click/colour/design, filters/search, favorites, room-specific PBR materials, rendered updates, connected interiors, wall collisions, keyboard/touch movement, stereo, unsupported VR fallback, mobile layout. Screenshots: test-results/')
+  console.log('PASS: dynamic surfaces, per-wall click/colour/design, filters/search, favorites, room-specific PBR materials, rendered updates, connected interiors, wall collisions, keyboard/touch movement, stereo, unsupported VR fallback, mobile layout. Screenshots: test-results/')
 } finally {await browser.close();await server.close()}

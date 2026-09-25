@@ -7,7 +7,7 @@ import { buildImportedHouse, importedRoomAt as roomAt, importedViewpoints as vie
 import { roomNames, sampleUrl, type Tile } from './catalog'
 
 export type ViewHandle = { enter:()=>void; goTo:(room:number)=>void; reset:()=>void; enterVR:()=>Promise<void>; fullscreen:()=>void }
-type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:WallStyle[]; walking:boolean; stereo:boolean; brightness:number; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onWalking:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
+type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:WallStyle[]; walking:boolean; stereo:boolean; brightness:number; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onFloorPick:(room:number)=>void; onWalking:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
 type Runtime = { goTo:(room:number)=>void; reset:()=>void; enter:()=>void; vr:()=>Promise<void>; apply:(room:number,tile:Tile)=>void; styleWall:(wall:number,style:WallStyle)=>void; renderer:THREE.WebGLRenderer }
 
 export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props,ref){
@@ -39,12 +39,12 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     function keyUp(event:KeyboardEvent){keys.delete(event.code)}
     function look(dx:number,dy:number){if(renderer.xr.isPresenting)return;rig.rotation.y-=dx*.003;pitch=THREE.MathUtils.clamp(pitch-dy*.003,-1.15,1.15);camera.rotation.x=pitch}
     function mouseMove(event:MouseEvent){if(document.pointerLockElement===renderer.domElement)look(event.movementX,event.movementY)}
-    const wallRay=new THREE.Raycaster()
-    function chooseWall(clientX:number,clientY:number){if(live.current.stereo||renderer.xr.isPresenting)return;const rect=renderer.domElement.getBoundingClientRect();wallRay.setFromCamera(new THREE.Vector2((clientX-rect.left)/rect.width*2-1,-((clientY-rect.top)/rect.height*2-1)),camera);const wall=house.pickWall(wallRay);if(wall!==null){if(document.pointerLockElement===renderer.domElement)document.exitPointerLock();live.current.onWallPick(wall)}}
+    const surfaceRay=new THREE.Raycaster()
+    function chooseSurface(clientX:number,clientY:number){if(live.current.stereo||renderer.xr.isPresenting)return;const rect=renderer.domElement.getBoundingClientRect();surfaceRay.setFromCamera(new THREE.Vector2((clientX-rect.left)/rect.width*2-1,-((clientY-rect.top)/rect.height*2-1)),camera);const surface=house.pickSurface(surfaceRay);if(!surface)return;if(document.pointerLockElement===renderer.domElement)document.exitPointerLock();if(surface.kind==='wall')live.current.onWallPick(surface.id);else live.current.onFloorPick(surface.id)}
     let pointerStartX=0,pointerStartY=0
-    function pointerDown(event:PointerEvent){if(document.pointerLockElement===renderer.domElement){const rect=renderer.domElement.getBoundingClientRect();chooseWall(rect.left+rect.width/2,rect.top+rect.height/2);return}dragging=true;oldX=pointerStartX=event.clientX;oldY=pointerStartY=event.clientY;renderer.domElement.setPointerCapture(event.pointerId);renderer.domElement.focus({preventScroll:true})}
+    function pointerDown(event:PointerEvent){if(document.pointerLockElement===renderer.domElement){const rect=renderer.domElement.getBoundingClientRect();chooseSurface(rect.left+rect.width/2,rect.top+rect.height/2);return}dragging=true;oldX=pointerStartX=event.clientX;oldY=pointerStartY=event.clientY;renderer.domElement.setPointerCapture(event.pointerId);renderer.domElement.focus({preventScroll:true})}
     function pointerMove(event:PointerEvent){if(dragging&&document.pointerLockElement!==renderer.domElement){look(event.clientX-oldX,event.clientY-oldY);oldX=event.clientX;oldY=event.clientY}}
-    function pointerUp(event:PointerEvent){if(dragging&&Math.hypot(event.clientX-pointerStartX,event.clientY-pointerStartY)<7)chooseWall(event.clientX,event.clientY);dragging=false}
+    function pointerUp(event:PointerEvent){if(dragging&&Math.hypot(event.clientX-pointerStartX,event.clientY-pointerStartY)<7)chooseSurface(event.clientX,event.clientY);dragging=false}
     function contextLost(event:Event){event.preventDefault();clear();live.current.onWalking(false);setError('3D graphics paused while your device frees graphics memory. The showroom will try to recover automatically.')}
     function contextRestored(){setError('');resize();live.current.onNotice('3D graphics restored.')}
     window.addEventListener('keydown',keyDown);window.addEventListener('keyup',keyUp);window.addEventListener('blur',clear);document.addEventListener('visibilitychange',clear);document.addEventListener('pointerlockchange',lockChange);document.addEventListener('mousemove',mouseMove)

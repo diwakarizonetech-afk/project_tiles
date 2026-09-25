@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -12,6 +12,8 @@ class TileDesign(Base):
     finish: Mapped[str] = mapped_column(String(60), nullable=False)
     surface: Mapped[str] = mapped_column(String(10), nullable=False)
     image_path: Mapped[str] = mapped_column(Text, nullable=False)
+    image_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    image_content_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     color: Mapped[str] = mapped_column(String(7), default="#d8d4cb", nullable=False)
     vein: Mapped[str] = mapped_column(String(7), default="#7e786f", nullable=False)
     size: Mapped[str] = mapped_column(String(60), default="Custom size", nullable=False)

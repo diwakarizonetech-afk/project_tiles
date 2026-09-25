@@ -2,7 +2,7 @@
 
 ## Dynamic tile catalog
 
-PostgreSQL is the single source of truth for all built-in floor and wall tiles plus customer uploads. Alembic revision `20260923_0002` creates the original catalog and `20260925_0003` adds 14 CC0 PBR materials (8 wall and 6 floor). Their local diffuse, normal and roughness maps are served by FastAPI from `/catalog`; uploaded products are served from `/uploads`. The React app no longer contains a static product catalog or procedural tile fallback.
+PostgreSQL is the single source of truth for all built-in floor and wall tiles plus customer uploads. Alembic revision `20260923_0002` creates the original catalog, `20260925_0003` adds 14 CC0 PBR materials (8 wall and 6 floor), and `20260925_0004` stores new customer-uploaded images in PostgreSQL so Render redeploys cannot erase them. Built-in diffuse, normal and roughness maps are served by FastAPI from `/catalog`; new uploaded images are served by the tile image API. The React app no longer contains a static product catalog or procedural tile fallback.
 
 After pulling this version, start Docker Desktop and run:
 
