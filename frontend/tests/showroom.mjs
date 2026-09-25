@@ -27,7 +27,7 @@ try {
   await page.screenshot({path:'test-results/wall-colours.png',fullPage:true})
   await page.getByRole('button',{name:'Close wall colours',exact:true}).click()
   await page.getByRole('button',{name:'COLLECTIONS',exact:true}).click()
-  assert.equal(await page.locator('.catalog-card').count(),30)
+  assert.equal(await page.locator('.catalog-card').count(),56)
   await page.getByRole('button',{name:'Wood',exact:true}).click()
   assert.equal(await page.locator('.catalog-card').count(),5)
   await page.getByRole('button',{name:'All',exact:true}).click()
@@ -104,5 +104,5 @@ try {
   await page.screenshot({path:'test-results/mobile-collections.png',fullPage:true})
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
   assert.deepEqual(errors,[],'No JavaScript or WebGL errors')
-  console.log('PASS: 30 tiles, per-wall click/colour/design, filters/search, favorites, room-specific materials, rendered updates, four connected rooms, wall collisions, keyboard/touch movement, stereo, unsupported VR fallback, mobile layout. Screenshots: test-results/')
+  console.log('PASS: 56 surfaces, per-wall click/colour/design, filters/search, favorites, room-specific PBR materials, rendered updates, connected interiors, wall collisions, keyboard/touch movement, stereo, unsupported VR fallback, mobile layout. Screenshots: test-results/')
 } finally {await browser.close();await server.close()}

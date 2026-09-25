@@ -11,7 +11,7 @@ export const wallSides=['West wall','East wall','North wall','South wall'] as co
 // customer can swap an individual wall without affecting the room's floor.
 export const wallDesigns=['paint','limewash','linen','stripes','arches','subway','herringbone','terrazzo','hexagon','zellige','kitkat','travertine','marble','checker','mosaic','chevron','fishscale','concrete','fluted','grid'] as const
 export type WallDesign=(typeof wallDesigns)[number]
-export type WallStyle={color:string;design:WallDesign;image?:string}
+export type WallStyle={color:string;design:WallDesign;image?:string;normal?:string;roughness?:string;repeat?:number}
 export const roomAt=(x:number,z:number)=>z>=0?(x<0?0:1):(x<0?2:3)
 export const viewpoints = [
   {x:-1.7,z:6.7,yaw:.57,pitch:-.14}, {x:2,z:6.4,yaw:-.48,pitch:-.13},

@@ -31,6 +31,16 @@ Material reference images and HDR environment
 Poly Haven assets are licensed CC0 1.0 Universal. https://polyhaven.com
 The HDRI is used for lighting and reflections only; it is not shown as the house background.
 
+Curated PBR wall and floor tile collection
+Source: Poly Haven (https://polyhaven.com)
+License: CC0 1.0 Universal. https://polyhaven.com/license
+Files use the 1K diffuse, OpenGL normal and roughness maps for web delivery.
+Wall assets: rounded_square_tiled_wall, square_tiled_wall,
+rectangular_facade_tiles, rectangular_facade_tiles_02, stone_tile_wall,
+volcanic_rock_tiles, concrete_tile_facade and long_white_tiles.
+Floor assets: tiled_floor_001, brown_floor_tiles, anti_skid_tiles,
+patio_tiles, worn_tile_floor and slab_tiles.
+
 Modern Ceiling Lamp 01 3D model and textures
 Author: Nimitz. Source: https://polyhaven.com/a/modern_ceiling_lamp_01
 License: CC0 1.0 Universal. The 1K glTF variant is used as the ceiling fixture in all four rooms.

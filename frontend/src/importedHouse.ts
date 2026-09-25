@@ -42,7 +42,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   const loadTexture=(url:string,repeat:number,color=false)=>{
     const key=`${url}|${repeat}|${color}`;let pending=textureCache.get(key)
     if(!pending){pending=fetchTexture(url).then(texture=>{texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(repeat,repeat);texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());if(color)texture.colorSpace=THREE.SRGBColorSpace;cachedTextures.add(texture);return texture}).catch(error=>{textureCache.delete(key);throw error});textureCache.set(key,pending)}
-    return pending
+    return pending.then(texture=>{const instance=texture.clone();instance.needsUpdate=true;return instance})
   }
   const floorMeshes:THREE.Mesh[]=[]
   const floorMaterials:THREE.MeshStandardMaterial[]=[]
@@ -52,6 +52,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   const wallMeshes:THREE.Mesh[]=[]
   const wallMaterials:THREE.MeshStandardMaterial[]=[]
   const wallMaps:(THREE.Texture|undefined)[]=Array(interiors.length*4)
+  const wallDetailMaps:THREE.Texture[][]=Array.from({length:interiors.length*4},()=>[])
   const wallLoads=Array(interiors.length*4).fill(0)
   const wallSeen=Array(interiors.length*4).fill(false)
   const modelLoads:Array<()=>Promise<void>>=[]
@@ -160,8 +161,8 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     if(!material||!mesh||!mesh.visible||!/^#[\da-fA-F]{6}$/.test(style.color))return
     const first=!wallSeen[wall];wallSeen[wall]=true
     const request=++wallLoads[wall]
-    wallMaps[wall]?.dispose();wallMaps[wall]=undefined
-    material.map=null;material.bumpMap=null;material.color.set(style.color);material.roughness=.82;material.needsUpdate=true
+    wallMaps[wall]?.dispose();wallMaps[wall]=undefined;wallDetailMaps[wall].forEach(map=>map.dispose());wallDetailMaps[wall]=[]
+    material.map=null;material.bumpMap=null;material.normalMap=null;material.roughnessMap=null;material.color.set(style.color);material.roughness=.82;material.needsUpdate=true
     // Keep the imported Gallery architecture clean until a real tile/design is chosen.
     if(Math.floor(wall/4)===3&&style.design==='paint'&&!style.image){material.opacity=0;material.depthWrite=false;return}
     if(!first||style.image||style.design!=='paint'){material.opacity=style.image||style.design!=='paint'?1:.9;material.depthWrite=true}
@@ -170,15 +171,18 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       material.map=texture;material.bumpMap=texture;material.bumpScale=.004;material.roughness=.7;material.needsUpdate=true;return
     }
     if(!style.image)return
-    void fetchTexture(style.image).then(texture=>{
-      if(disposed||request!==wallLoads[wall]){texture.dispose();return}
-      wallMaps[wall]=texture;texture.colorSpace=THREE.SRGBColorSpace;texture.wrapS=texture.wrapT=THREE.RepeatWrapping
-      texture.repeat.set(mesh.userData.repeat,2.4);texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy())
-      material.color.set('#ffffff');material.map=texture;material.bumpMap=texture;material.bumpScale=.006;material.roughness=.66;material.opacity=1;material.depthWrite=true;material.needsUpdate=true
+    const repeat=style.repeat??mesh.userData.repeat
+    void Promise.all([fetchTexture(style.image),style.normal?fetchTexture(style.normal):Promise.resolve(null),style.roughness?fetchTexture(style.roughness):Promise.resolve(null)]).then(([texture,normal,roughness])=>{
+      if(disposed||request!==wallLoads[wall]){texture.dispose();normal?.dispose();roughness?.dispose();return}
+      wallMaps[wall]=texture;wallDetailMaps[wall]=[...(normal?[normal]:[]),...(roughness?[roughness]:[])]
+      for(const map of [texture,normal,roughness])if(map){map.wrapS=map.wrapT=THREE.RepeatWrapping;map.repeat.set(repeat,repeat);map.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy())}
+      texture.colorSpace=THREE.SRGBColorSpace
+      material.color.set('#ffffff');material.map=texture;material.bumpMap=normal?null:texture;material.bumpScale=.006;material.normalMap=normal;material.roughnessMap=roughness;material.roughness=.66;material.opacity=1;material.depthWrite=true;material.needsUpdate=true
+      if(normal)material.normalScale.set(.5,.5)
     }).catch(error=>console.error(`Could not load wall tile for wall ${wall}`,error))
   }
   function pickWall(raycaster:THREE.Raycaster){const hit=raycaster.intersectObjects(wallMeshes,false)[0];return typeof hit?.object.userData.wallId==='number'?hit.object.userData.wallId:null}
   function canStand(x:number,z:number){const room=importedRoomAt(x,z),entry=interiors[room];return Math.abs(x)<entry.walkX&&Math.abs(z-centres[room])<entry.walkZ}
-  function dispose(){disposed=true;geometries.forEach(geometry=>geometry.dispose());materials.forEach(material=>material.dispose());textures.forEach(texture=>texture.dispose());cachedTextures.forEach(texture=>texture.dispose());wallMaps.forEach(texture=>texture?.dispose());floorMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});wallMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});environment?.dispose()}
+  function dispose(){disposed=true;geometries.forEach(geometry=>geometry.dispose());materials.forEach(material=>material.dispose());textures.forEach(texture=>texture.dispose());cachedTextures.forEach(texture=>texture.dispose());wallMaps.forEach(texture=>texture?.dispose());wallDetailMaps.forEach(maps=>maps.forEach(texture=>texture.dispose()));floorMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});wallMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});environment?.dispose()}
   return {scene,applyTile,setWallStyle,pickWall,canStand,floorMeshes,dispose}
 }
