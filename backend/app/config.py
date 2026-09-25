@@ -5,6 +5,13 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / '.env')
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://alpha_tiles:alpha_tiles@db:5432/alpha_tiles")
+# Render supplies PostgreSQL URLs using the generic postgresql:// (or legacy
+# postgres://) scheme. This project installs psycopg v3, so make the SQLAlchemy
+# driver explicit instead of letting it fall back to the uninstalled psycopg2.
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads")).resolve()
 CATALOG_DIR = Path(os.getenv("CATALOG_DIR", Path(__file__).resolve().parents[1] / "catalog")).resolve()
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
