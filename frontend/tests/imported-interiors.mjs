@@ -19,6 +19,10 @@ try {
   await page.goto(server.resolvedUrls.local[0],{waitUntil:'networkidle',timeout:90000})
   await page.getByRole('button',{name:'STEP INSIDE',exact:true}).waitFor({timeout:60000})
   assert.equal(await page.locator('.graphics-error').count(),0)
+  const floorCount=catalog.filter(tile=>tile.surface!=='Wall').length
+  assert.match(await page.locator('.all-tiles').innerText(),new RegExp(`EXPLORE ALL ${floorCount} SURFACES`),'Homepage uses the backend floor catalog count')
+  assert.match(await page.locator('.tile-arrows').innerText(),new RegExp(`/ ${floorCount}$`),'Carousel uses the backend floor catalog count')
+  assert.match(await page.locator('section').filter({hasText:'CURATED SURFACES'}).innerText(),new RegExp(`${catalog.length} CURATED SURFACES`),'Footer uses the complete backend catalog count')
   const contact=page.locator('#contact')
   await contact.scrollIntoViewIfNeeded()
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Desktop contact design does not overflow the page horizontally')

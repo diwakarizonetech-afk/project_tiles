@@ -1,6 +1,9 @@
 import { chromium } from '@playwright/test'
+import { createServer } from 'vite'
 import assert from 'node:assert/strict'
 
+const server=await createServer({server:{host:'localhost',port:5173,strictPort:true}})
+await server.listen()
 const browser=await chromium.launch({channel:'chrome',headless:true,args:['--enable-unsafe-swiftshader']})
 try {
   const page=await browser.newPage({viewport:{width:1536,height:811}})
@@ -10,6 +13,10 @@ try {
   page.on('requestfailed',request=>errors.push(`REQUEST ${request.url()} ${request.failure()?.errorText}`))
   await page.goto('http://localhost:5173',{waitUntil:'networkidle',timeout:90000})
   await page.getByRole('button',{name:'STEP INSIDE',exact:true}).waitFor({timeout:60000})
+  const catalog=await page.evaluate(()=>fetch('http://localhost:8000/api/tile-designs').then(response=>response.json()))
+  const floorCount=catalog.filter(tile=>tile.surface!=='Wall').length
+  assert.match(await page.locator('.all-tiles').innerText(),new RegExp(`EXPLORE ALL ${floorCount} SURFACES`))
+  assert.match(await page.locator('.tile-arrows').innerText(),new RegExp(`/ ${floorCount}$`))
   const cdp=await page.context().newCDPSession(page)
   const shot=async()=>{const box=await page.locator('.three-host').boundingBox();assert.ok(box);const result=await cdp.send('Page.captureScreenshot',{format:'png',fromSurface:true,captureBeyondViewport:false,clip:{x:box.x,y:box.y,width:box.width,height:box.height,scale:1}});return Buffer.from(result.data,'base64')}
   const floorBefore=await shot()
@@ -33,4 +40,5 @@ try {
   console.log('PASS: live backend floor and wall textures render')
 } finally {
   await browser.close()
+  await server.close()
 }
