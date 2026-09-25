@@ -24,7 +24,8 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   const scene=new THREE.Scene();scene.background=new THREE.Color('#c8d1cb')
   const textures=new Set<THREE.Texture>(),materials=new Set<THREE.Material>(),geometries=new Set<THREE.BufferGeometry>()
   const pmrem=new THREE.PMREMGenerator(renderer);let environment:THREE.WebGLRenderTarget|null=null
-  new HDRLoader().load('/hdr/modern_bathroom_2k.hdr',hdr=>{if(disposed){hdr.dispose();pmrem.dispose();return}environment=pmrem.fromEquirectangular(hdr);hdr.dispose();scene.environment=environment.texture;scene.environmentIntensity=.82;pmrem.dispose()},undefined,()=>pmrem.dispose())
+  const loadEnvironment=(attempt=0)=>new HDRLoader().load('/hdr/modern_bathroom_2k.hdr',hdr=>{if(disposed){hdr.dispose();pmrem.dispose();return}environment=pmrem.fromEquirectangular(hdr);hdr.dispose();scene.environment=environment.texture;scene.environmentIntensity=.82;pmrem.dispose()},undefined,error=>{if(disposed){pmrem.dispose();return}if(attempt<2){window.setTimeout(()=>loadEnvironment(attempt+1),1200*(attempt+1));return}console.warn('HDR environment unavailable after retries',error);pmrem.dispose()})
+  loadEnvironment()
   scene.add(new THREE.HemisphereLight('#fff7e9','#6e756f',2.25))
   const sun=new THREE.DirectionalLight('#fff0d4',2.7);sun.position.set(-5,8,5);scene.add(sun)
   const loader=new GLTFLoader().setMeshoptDecoder(MeshoptDecoder)
@@ -53,6 +54,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   const wallMaps:(THREE.Texture|undefined)[]=Array(interiors.length*4)
   const wallLoads=Array(interiors.length*4).fill(0)
   const wallSeen=Array(interiors.length*4).fill(false)
+  const modelLoads:Array<()=>Promise<void>>=[]
   const makeWallPattern=(style:WallStyle,repeat:number)=>{
     const canvas=document.createElement('canvas');canvas.width=canvas.height=256
     const ctx=canvas.getContext('2d')!;ctx.fillStyle='#fff';ctx.fillRect(0,0,256,256);ctx.strokeStyle='#626a65';ctx.fillStyle='#8e9690';ctx.lineWidth=3
@@ -88,8 +90,8 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     addWall(1,entry.walkZ*2,entry.walkX-.045,0,-Math.PI/2)
     addWall(2,entry.walkX*2,0,-entry.walkZ+.045,0)
     addWall(3,entry.walkX*2,0,entry.walkZ-.045,Math.PI)
-    const loadModel=()=>loader.load(entry.url,gltf=>{
-      if(disposed){gltf.scene.traverse(o=>{if(o instanceof THREE.Mesh)o.geometry.dispose()});return}
+    const loadModel=()=>new Promise<void>(resolve=>{const attemptLoad=(attempt:number)=>loader.load(entry.url,gltf=>{
+      if(disposed){gltf.scene.traverse(o=>{if(o instanceof THREE.Mesh)o.geometry.dispose()});resolve();return}
       const model=gltf.scene,bounds=new THREE.Box3().setFromObject(model),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3())
       const scale=Math.min(1,entry.maxSpan/Math.max(size.x,size.z),3.45/size.y)
       model.scale.setScalar(scale);model.position.set(-center.x*scale,-bounds.min.y*scale,-center.z*scale)
@@ -132,9 +134,13 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
         geometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));object.geometry=geometry;geometries.add(geometry);object.material=floorMaterial;object.receiveShadow=true
       });floor.visible=false}
       const fill=new THREE.PointLight(index===0?'#ffe0ad':'#fff0d7',index===0?5:3.7,8,2);fill.position.set(0,2.45,.4);group.add(fill)
-    },undefined,error=>console.error(`Could not load ${entry.label}`,error))
-    if(index===0)loadModel();else window.setTimeout(loadModel,index*280)
+      resolve()
+    },undefined,error=>{if(disposed){resolve();return}if(attempt<2){window.setTimeout(()=>attemptLoad(attempt+1),1200*(attempt+1));return}console.error(`Could not load ${entry.label} after retries`,error);resolve()});attemptLoad(0)})
+    modelLoads.push(loadModel)
   })
+  // Load one room at a time. This avoids several large GLB/HDR responses
+  // competing on the same HTTP/2 connection on hosted storefronts.
+  void (async()=>{for(const load of modelLoads){if(disposed)break;await load()}})()
   function applyTile(room:number,tile:Tile){
     const material=floorMaterials[room],entry=interiors[room]
     if(!material||!entry)return
