@@ -56,6 +56,19 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   const wallLoads=Array(interiors.length*4).fill(0)
   const wallSeen=Array(interiors.length*4).fill(false)
   const modelLoads:Array<()=>Promise<void>>=[]
+  const addRealisticLivingRoomTv=(group:THREE.Group)=>{
+    const bezel=new THREE.MeshStandardMaterial({color:'#11171a',roughness:.2,metalness:.45})
+    const screen=new THREE.MeshStandardMaterial({color:'#071116',roughness:.12,metalness:.18,emissive:'#173c47',emissiveIntensity:.28})
+    const trim=new THREE.MeshStandardMaterial({color:'#2b3435',roughness:.25,metalness:.65})
+    const tv=new THREE.Group();tv.name='MJP realistic living room television';tv.position.set(0,1.67,-2.39)
+    const body=new THREE.Mesh(new THREE.BoxGeometry(1.92,1.2,.105),bezel);body.castShadow=true;body.receiveShadow=true;tv.add(body)
+    const display=new THREE.Mesh(new THREE.PlaneGeometry(1.73,.975),screen);display.position.z=.058;display.name='Glossy TV display';tv.add(display)
+    const lowerTrim=new THREE.Mesh(new THREE.BoxGeometry(1.84,.045,.13),trim);lowerTrim.position.set(0,-.57,.01);tv.add(lowerTrim)
+    const soundbar=new THREE.Mesh(new THREE.BoxGeometry(.72,.055,.14),trim);soundbar.position.set(0,-.69,.02);soundbar.castShadow=true;tv.add(soundbar)
+    for(const x of [-.5,.5]){const foot=new THREE.Mesh(new THREE.BoxGeometry(.07,.18,.12),trim);foot.position.set(x,-.68,.02);foot.rotation.z=x<0?-.16:.16;tv.add(foot)}
+    tv.traverse(object=>{if(object instanceof THREE.Mesh){object.castShadow=true;object.receiveShadow=true}})
+    group.add(tv)
+  }
   const makeWallPattern=(style:WallStyle,repeat:number)=>{
     const canvas=document.createElement('canvas');canvas.width=canvas.height=256
     const ctx=canvas.getContext('2d')!;ctx.fillStyle='#fff';ctx.fillRect(0,0,256,256);ctx.strokeStyle='#626a65';ctx.fillStyle='#8e9690';ctx.lineWidth=3
@@ -97,6 +110,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       const scale=Math.min(1,entry.maxSpan/Math.max(size.x,size.z),3.45/size.y)
       model.scale.setScalar(scale);model.position.set(-center.x*scale,-bounds.min.y*scale,-center.z*scale)
       group.add(model);group.updateMatrixWorld(true)
+      if(index===0)addRealisticLivingRoomTv(group)
       model.updateMatrixWorld(true)
       let authoredFloorY=.105
       const detectedFloors=new Set<THREE.Mesh>()
