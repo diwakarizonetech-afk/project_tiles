@@ -22,12 +22,12 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     setError('');const element=host.current!;let renderer:THREE.WebGLRenderer
     try {renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'})}catch {setError('This browser could not start 3D. Enable hardware acceleration or open this page in a WebGL-capable browser.');return}
     // High-fidelity pixel ratio with PCFSoftShadowMap for realistic soft shadows and crisp textures.
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.75));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.06;renderer.xr.enabled=true
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.75));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.06;renderer.xr.enabled=true
     element.appendChild(renderer.domElement);renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Interactive 3D house. Drag to look. Enter walkthrough, then use W A S D or the arrow keys to move.');renderer.domElement.setAttribute('role','application')
-    const house=buildImportedHouse(renderer);const camera=new THREE.PerspectiveCamera(68,1,.07,140);const rig=new THREE.Group();rig.add(camera);house.scene.add(rig);camera.rotation.order='YXZ'
+    const house=buildImportedHouse(renderer);const camera=new THREE.PerspectiveCamera(60,1,.07,140);const rig=new THREE.Group();rig.add(camera);house.scene.add(rig);camera.rotation.order='YXZ'
     const stereoCamera=new THREE.StereoCamera();stereoCamera.eyeSep=.064
-    const keys=new Set<string>();let pitch=-.14,last=0,uiTime=0,previousRoom=-1,disposed=false,width=1,height=1;let dragging=false,oldX=0,oldY=0
-    const goTo=(i:number)=>{const p=viewpoints[i];rig.position.set(p.x,0,p.z);rig.rotation.y=p.yaw;pitch=p.pitch;if(!renderer.xr.isPresenting){camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0)}live.current.onRoom(i)}
+    const keys=new Set<string>();let pitch=-.14,last=0,uiTime=0,previousRoom=-1,disposed=false,width=1,height=1,kitchenSpawnApplied=false;let dragging=false,oldX=0,oldY=0
+    const goTo=(i:number)=>{const kitchen=i===3?house.getKitchenStart():null,p=kitchen??viewpoints[i];rig.position.set(p.x,kitchen?house.getKitchenFloorHeight():0,p.z);rig.rotation.y=kitchen?.yaw??p.yaw;pitch=kitchen?0:viewpoints[i].pitch;if(kitchen)kitchenSpawnApplied=true;if(!renderer.xr.isPresenting){camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0)}live.current.onRoom(i)}
     goTo(live.current.initialRoom ?? 2)
     live.current.selected.forEach((tile,i)=>house.applyTile(i,tile))
     live.current.wallStyles.forEach((style,i)=>house.setWallStyle(i,style))
@@ -41,7 +41,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     function deviceOrientation(event:DeviceOrientationEvent){if(renderer.xr.isPresenting||!live.current.gyro||event.alpha===null||event.beta===null)return;if(!gyroSession.current){gyroSession.current=true;gyroBase.current={alpha:event.alpha,beta:event.beta,yaw:rig.rotation.y,pitch};return}const alphaDelta=THREE.MathUtils.degToRad(event.alpha-gyroBase.current.alpha);const betaDelta=THREE.MathUtils.degToRad(event.beta-gyroBase.current.beta);rig.rotation.y=gyroBase.current.yaw-alphaDelta;pitch=THREE.MathUtils.clamp(gyroBase.current.pitch-betaDelta,-1.15,1.15);camera.rotation.x=pitch}
     function mouseMove(event:MouseEvent){if(document.pointerLockElement===renderer.domElement)look(event.movementX,event.movementY)}
     const surfaceRay=new THREE.Raycaster()
-    function chooseSurface(clientX:number,clientY:number){if(live.current.stereo||renderer.xr.isPresenting)return;const rect=renderer.domElement.getBoundingClientRect();surfaceRay.setFromCamera(new THREE.Vector2((clientX-rect.left)/rect.width*2-1,-((clientY-rect.top)/rect.height*2-1)),camera);const surface=house.pickSurface(surfaceRay);if(!surface)return;if(document.pointerLockElement===renderer.domElement)document.exitPointerLock();if(surface.kind==='wall')live.current.onWallPick(surface.id);else live.current.onFloorPick(surface.id)}
+    function chooseSurface(clientX:number,clientY:number){if(live.current.stereo||renderer.xr.isPresenting)return;const rect=renderer.domElement.getBoundingClientRect();surfaceRay.setFromCamera(new THREE.Vector2((clientX-rect.left)/rect.width*2-1,-((clientY-rect.top)/rect.height*2-1)),camera);const surface=house.pickSurface(surfaceRay);if(!surface)return;if(document.pointerLockElement===renderer.domElement)document.exitPointerLock();if(surface.kind==='wall'||surface.kind==='backsplash')live.current.onWallPick(surface.id);else live.current.onFloorPick(surface.id)}
     let pointerStartX=0,pointerStartY=0
     function pointerDown(event:PointerEvent){if(document.pointerLockElement===renderer.domElement){const rect=renderer.domElement.getBoundingClientRect();chooseSurface(rect.left+rect.width/2,rect.top+rect.height/2);return}dragging=true;setHoverHint('');oldX=pointerStartX=event.clientX;oldY=pointerStartY=event.clientY;renderer.domElement.setPointerCapture(event.pointerId);renderer.domElement.focus({preventScroll:true})}
     function pointerMove(event:PointerEvent){
@@ -52,7 +52,10 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
         const rect=renderer.domElement.getBoundingClientRect()
         surfaceRay.setFromCamera(new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-((event.clientY-rect.top)/rect.height*2-1)),camera)
         const hit=house.pickSurface(surfaceRay)
-        if(hit?.kind==='wall'){
+        if(hit?.kind==='backsplash'){
+          setHoverHint('✨ Click to customize the kitchen backsplash')
+          renderer.domElement.style.cursor='pointer'
+        } else if(hit?.kind==='wall'){
           const r=Math.floor(hit.id/4),s=hit.id%4
           const sideName=['West wall','East wall','North wall (Feature)','South wall'][s]
           setHoverHint(`✨ Click to customise ${roomNames[r]} · ${sideName}`)
@@ -72,9 +75,9 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     window.addEventListener('keydown',keyDown);window.addEventListener('keyup',keyUp);window.addEventListener('blur',clear);document.addEventListener('visibilitychange',clear);document.addEventListener('pointerlockchange',lockChange);document.addEventListener('mousemove',mouseMove);window.addEventListener('deviceorientation',deviceOrientation)
     renderer.domElement.addEventListener('pointerdown',pointerDown);renderer.domElement.addEventListener('pointermove',pointerMove);renderer.domElement.addEventListener('pointerup',pointerUp);renderer.domElement.addEventListener('pointercancel',pointerUp);renderer.domElement.addEventListener('webglcontextlost',contextLost);renderer.domElement.addEventListener('webglcontextrestored',contextRestored)
     const raycaster=new THREE.Raycaster();const rotation=new THREE.Matrix4();const teleport=new THREE.Mesh(new THREE.RingGeometry(.2,.3,32),new THREE.MeshBasicMaterial({color:'#7dba9a',side:THREE.DoubleSide}));teleport.rotation.x=-Math.PI/2;teleport.visible=false;house.scene.add(teleport)
-    function floorHit(controller:THREE.Object3D){controller.updateWorldMatrix(true,false);rotation.identity().extractRotation(controller.matrixWorld);raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);raycaster.ray.direction.set(0,0,-1).applyMatrix4(rotation);const hit=raycaster.intersectObjects(house.scene.children,true).find(h=>h.object!==teleport&&h.object instanceof THREE.Mesh);return hit?.object.userData.floor&&house.canStand(hit.point.x,hit.point.z)?hit.point:null}
+    function floorHit(controller:THREE.Object3D){controller.updateWorldMatrix(true,false);rotation.identity().extractRotation(controller.matrixWorld);raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);raycaster.ray.direction.set(0,0,-1).applyMatrix4(rotation);const hit=raycaster.intersectObjects(house.scene.children,true).find(h=>h.object!==teleport&&h.object instanceof THREE.Mesh&&h.object.userData.floor===true&&house.canStand(h.point.x,h.point.z));return hit?.point??null}
     const controllers=[renderer.xr.getController(0),renderer.xr.getController(1)]
-    const selectCallbacks=controllers.map(controller=>{rig.add(controller);const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3(0,0,-5)]),new THREE.LineBasicMaterial({color:'#96cdb0'}));controller.add(line);const select=()=>{const hit=floorHit(controller);if(hit){const head=new THREE.Vector3();camera.getWorldPosition(head);rig.position.x+=hit.x-head.x;rig.position.z+=hit.z-head.z}};controller.addEventListener('select',select);return select})
+    const selectCallbacks=controllers.map(controller=>{rig.add(controller);const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3(0,0,-5)]),new THREE.LineBasicMaterial({color:'#96cdb0'}));controller.add(line);const select=()=>{const hit=floorHit(controller);if(hit){const head=new THREE.Vector3();camera.getWorldPosition(head);rig.position.x+=hit.x-head.x;rig.position.y=hit.y;rig.position.z+=hit.z-head.z}};controller.addEventListener('select',select);return select})
     const onStart=()=>{clear();camera.position.set(0,0,0);camera.rotation.set(0,0,0);live.current.onXR(true)}
     const onEnd=()=>{camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0);teleport.visible=false;live.current.onXR(false)}
     renderer.xr.addEventListener('sessionstart',onStart);renderer.xr.addEventListener('sessionend',onEnd)
@@ -82,12 +85,28 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
       if(!navigator.xr||!window.isSecureContext){live.current.onNotice('Headset VR needs a compatible WebXR browser on HTTPS or localhost. You can still walk through the house in normal mode.');return}
       try{if(renderer.xr.isPresenting){await renderer.xr.getSession()?.end();return}if(!await navigator.xr.isSessionSupported('immersive-vr')){live.current.onNotice('No compatible VR headset detected. Use Stereo preview to see both eye views, or continue in normal mode.');return}const session=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','bounded-floor']});if(disposed){await session.end();return}document.exitPointerLock();await renderer.xr.setSession(session)}catch{live.current.onNotice('VR could not start. Connect your headset and allow the browser’s VR permission, then try again.')}
     }}
-    const direction=new THREE.Vector3();let snapReady=true
-    function move(dx:number,dz:number,dt:number){const length=Math.hypot(dx,dz);if(length<.05)return;if(length>1){dx/=length;dz/=length}let yaw=rig.rotation.y;if(renderer.xr.isPresenting){camera.getWorldDirection(direction);yaw=Math.atan2(-direction.x,-direction.z)}const speed=2.5*dt;const x=(dx*Math.cos(yaw)+dz*Math.sin(yaw))*speed;const z=(-dx*Math.sin(yaw)+dz*Math.cos(yaw))*speed;if(house.canStand(rig.position.x+x,rig.position.z))rig.position.x+=x;if(house.canStand(rig.position.x,rig.position.z+z))rig.position.z+=z}
+    const direction=new THREE.Vector3();let snapReady=true,lastMovementDebug=0
+    function move(dx:number,dz:number,dt:number){
+      const length=Math.hypot(dx,dz);if(length<.05)return
+      if(length>1){dx/=length;dz/=length}
+      let yaw=rig.rotation.y
+      if(renderer.xr.isPresenting){camera.getWorldDirection(direction);yaw=Math.atan2(-direction.x,-direction.z)}
+      const speed=2.5*dt,worldX=(dx*Math.cos(yaw)+dz*Math.sin(yaw))*speed,worldZ=(-dx*Math.sin(yaw)+dz*Math.cos(yaw))*speed
+      const blockedX=!house.canStand(rig.position.x+worldX,rig.position.z)
+      if(!blockedX)rig.position.x+=worldX
+      const blockedZ=!house.canStand(rig.position.x,rig.position.z+worldZ)
+      if(!blockedZ)rig.position.z+=worldZ
+      if(import.meta.env.DEV&&performance.now()-lastMovementDebug>1000){
+        const cameraPosition=camera.getWorldPosition(new THREE.Vector3())
+        console.debug('[Cooking Club movement]',JSON.stringify({environment:roomAt(rig.position.x,rig.position.z)===3?'Cooking Club':'other room',player:{x:rig.position.x,y:rig.position.y,z:rig.position.z},camera:{x:cameraPosition.x,y:cameraPosition.y,z:cameraPosition.z},cameraYaw:rig.rotation.y,input:{x:dx,z:dz},worldDirection:{x:worldX,z:worldZ},collision:{x:blockedX,z:blockedZ},...house.getKitchenNavigation()}))
+        lastMovementDebug=performance.now()
+      }
+    }
     renderer.setAnimationLoop((time)=>{
       if(disposed||renderer.getContext().isContextLost()||document.hidden)return;const dt=Math.min((time-last)/1000,.033);last=time;renderer.toneMappingExposure=live.current.brightness
+      if(!kitchenSpawnApplied&&roomAt(rig.position.x,rig.position.z)===3&&house.getKitchenStart())goTo(3)
       if(live.current.walking&&!document.querySelector('[role="dialog"]'))move((keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0)+movement.current.x,(keys.has('KeyS')||keys.has('ArrowDown')?1:0)-(keys.has('KeyW')||keys.has('ArrowUp')?1:0)+movement.current.z,dt)
-      if(renderer.xr.isPresenting){const session=renderer.xr.getSession();let turning=0;for(const source of session?.inputSources??[]){const axes=source.gamepad?.axes;if(axes&&axes.length>=4){if(source.handedness==='left')move(axes[2],axes[3],dt);else turning=axes[2]}}if(Math.abs(turning)>.7&&snapReady){rig.rotation.y-=Math.sign(turning)*Math.PI/6;snapReady=false}if(Math.abs(turning)<.3)snapReady=true;const hit=floorHit(controllers[0])??floorHit(controllers[1]);teleport.visible=!!hit;if(hit)teleport.position.set(hit.x,.02,hit.z)}
+      if(renderer.xr.isPresenting){const session=renderer.xr.getSession();let turning=0;for(const source of session?.inputSources??[]){const axes=source.gamepad?.axes;if(axes&&axes.length>=4){if(source.handedness==='left')move(axes[2],axes[3],dt);else turning=axes[2]}}if(Math.abs(turning)>.7&&snapReady){rig.rotation.y-=Math.sign(turning)*Math.PI/6;snapReady=false}if(Math.abs(turning)<.3)snapReady=true;const hit=floorHit(controllers[0])??floorHit(controllers[1]);teleport.visible=!!hit;if(hit)teleport.position.set(hit.x,hit.y+.02,hit.z)}
       const current=roomAt(rig.position.x,rig.position.z);if(current!==previousRoom){live.current.onRoom(current);previousRoom=current}if(time-uiTime>140){setPosition({x:rig.position.x,z:rig.position.z,yaw:rig.rotation.y});uiTime=time}
       if(live.current.stereo&&!renderer.xr.isPresenting){camera.aspect=width/height;camera.updateProjectionMatrix();house.scene.updateMatrixWorld();stereoCamera.update(camera);renderer.setScissorTest(true);renderer.setViewport(0,0,width/2,height);renderer.setScissor(0,0,width/2,height);renderer.render(house.scene,stereoCamera.cameraL);renderer.setViewport(width/2,0,width/2,height);renderer.setScissor(width/2,0,width/2,height);renderer.render(house.scene,stereoCamera.cameraR);renderer.setScissorTest(false)}else{renderer.setViewport(0,0,width,height);renderer.render(house.scene,camera)}
     })

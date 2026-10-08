@@ -10,10 +10,11 @@ const interiors = [
   {url:'/models/mjp-cozy-living.glb',label:'Cozy living room',viewZ:2.25,yaw:0,maxSpan:7,walkX:2.75,walkZ:2.45},
   {url:'/models/mjp-modern-bedroom.glb',label:'Modern bedroom',viewZ:2.15,yaw:0,maxSpan:7,walkX:2.85,walkZ:2.65},
   {url:'/models/mjp-vr-gallery.glb',label:'VR gallery',viewZ:2.3,yaw:0,maxSpan:7,walkX:2.8,walkZ:2.8},
-  {url:'/models/mjp-cooking-club.glb',label:'Cooking club',viewZ:0,yaw:Math.PI/2,maxSpan:12,walkX:5,walkZ:3.7},
+  {url:'/models/modern_scandinavian_kitchen_island.glb',label:'Cooking Club',environmentType:'cooking-club',viewZ:0,yaw:0,maxSpan:12,walkX:5,walkZ:3.7},
 ] as const
 const centres=interiors.map((_,index)=>index*18)
-export const importedViewpoints=interiors.map((entry,index)=>({x:index===0?0.0:0,z:centres[index]+(index===0?1.85:entry.viewZ),yaw:index===0?0.05:entry.yaw,pitch:index===1?-0.08:-.10}))
+const walkBounds:{walkX:number;walkZ:number}[]=interiors.map(entry=>({walkX:entry.walkX,walkZ:entry.walkZ}))
+export const importedViewpoints=interiors.map((entry,index)=>({x:0,z:centres[index]+(index===0?1.85:entry.viewZ),yaw:entry.yaw,pitch:index===1?-0.08:index===3?0:-.10}))
 export const importedRoomAt=(_x:number,z:number)=>centres.reduce((closest,centre,index)=>Math.abs(z-centre)<Math.abs(z-centres[closest])?index:closest,0)
 
 export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
@@ -48,9 +49,11 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     if(!pending){pending=fetchTexture(url).then(texture=>{texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(repeatX,repeatY);texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());if(color)texture.colorSpace=THREE.SRGBColorSpace;cachedTextures.add(texture);return texture}).catch(error=>{textureCache.delete(key);throw error});textureCache.set(key,pending)}
     return pending.then(texture=>{const instance=texture.clone();instance.needsUpdate=true;return instance})
   }
+  const floorPhysicalDimensions=interiors.map(entry=>({width:entry.walkX*2,depth:entry.walkZ*2}))
   const getFloorDimensions=(room:number)=>{
     if(room===0)return {width:6.2,depth:5.2}
     if(room===1)return {width:5.7,depth:5.3}
+    if(room===3)return floorPhysicalDimensions[room]
     const entry=interiors[room]
     return {width:(entry?.walkX??2.8)*2,depth:(entry?.walkZ??2.8)*2}
   }
@@ -93,11 +96,17 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   const floorLoads=interiors.map(()=>0)
   const wallMeshes:THREE.Mesh[]=[]
   const wallMaterials:THREE.MeshStandardMaterial[]=[]
-  const wallMaps:(THREE.Texture|undefined)[]=Array(interiors.length*4)
-  const wallDetailMaps:THREE.Texture[][]=Array.from({length:interiors.length*4},()=>[])
-  const wallLoads=Array(interiors.length*4).fill(0)
-  const wallSeen=Array(interiors.length*4).fill(false)
+  const wallMaps:(THREE.Texture|undefined)[]=Array(interiors.length*4+1)
+  const wallDetailMaps:THREE.Texture[][]=Array.from({length:interiors.length*4+1},()=>[])
+  const wallLoads=Array(interiors.length*4+1).fill(0)
+  const wallSeen=Array(interiors.length*4+1).fill(false)
   const modelLoads:Array<()=>Promise<void>>=[]
+  const cookingSurfaces:{floor:THREE.Mesh[];walls:THREE.Mesh[];backsplash:THREE.Mesh[]}={floor:[],walls:[],backsplash:[]}
+  const walkObstacles:THREE.Box3[]=[]
+  const walkObstacleNames:string[]=[]
+  const kitchenWalkTriangles:{a:THREE.Vector2;b:THREE.Vector2;c:THREE.Vector2;bounds:THREE.Box2}[]=[]
+  let kitchenFloorY=0
+  let kitchenStart:{x:number;z:number;yaw:number}|null=null
 
   // Procedural normal and bump map generators for realistic tactile materials
   const createProceduralTexture=(draw:(ctx:CanvasRenderingContext2D,w:number,h:number)=>void,w=512,h=w)=>{
@@ -988,6 +997,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   }
   interiors.forEach((entry,index)=>{
     const group=new THREE.Group();group.position.z=centres[index];group.userData.room=index;group.name=entry.label;scene.add(group)
+    if(index===3)group.userData.environmentType='cooking-club'
     const floorMaterial=new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.64,metalness:.015,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1})
     const floor=new THREE.Mesh(new THREE.PlaneGeometry(entry.walkX*2,entry.walkZ*2),floorMaterial)
     floor.rotation.x=-Math.PI/2;floor.position.y=.125;floor.visible=false;floor.receiveShadow=true;floor.renderOrder=2;floor.userData.floor=true;floor.userData.room=index;group.add(floor);floorMeshes.push(floor);floorMaterials.push(floorMaterial)
@@ -995,7 +1005,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     const addWall=(side:number,width:number,x:number,z:number,rotationY:number)=>{
       const id=index*4+side
       const material=new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.84,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1})
-      const customRoom=index===1,displayWidth=width,displayHeight=3.15
+      const customRoom=index===1||index===3,displayWidth=width,displayHeight=3.15
       const wall=new THREE.Mesh(new THREE.PlaneGeometry(displayWidth,displayHeight),material)
       wall.position.set(x,1.68,z);wall.rotation.y=rotationY;wall.visible=!customRoom;wall.userData.wallId=id;wall.userData.repeat=Math.max(2,displayWidth*.72);wallGroup.add(wall);wallMeshes.push(wall);wallMaterials[id]=material
     }
@@ -1005,10 +1015,17 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     addWall(3,entry.walkX*2,0,entry.walkZ-.045,Math.PI)
     const loadModel=()=>new Promise<void>(resolve=>{const attemptLoad=(attempt:number)=>loader.load(entry.url,gltf=>{
       if(disposed){gltf.scene.traverse(o=>{if(o instanceof THREE.Mesh)o.geometry.dispose()});resolve();return}
-      const model=gltf.scene,bounds=new THREE.Box3().setFromObject(model),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3())
+      const model=gltf.scene
+      // The uploaded GLB is already Y-up; preserve its authored orientation.
+      let bounds=new THREE.Box3().setFromObject(model),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3())
       const scale=Math.min(1,entry.maxSpan/Math.max(size.x,size.z),3.45/size.y)
       model.scale.setScalar(scale);model.position.set(-center.x*scale,-bounds.min.y*scale,-center.z*scale)
       group.add(model);group.updateMatrixWorld(true)
+      bounds=new THREE.Box3().setFromObject(model);size=bounds.getSize(new THREE.Vector3());center=bounds.getCenter(new THREE.Vector3())
+      if(index===3){
+        // Fit the walking boundary to the measured architectural footprint.
+        walkBounds[index]={walkX:Math.max(.8,size.x/2-.12),walkZ:Math.max(.8,size.z/2-.12)}
+      }
       let authoredFloorY=.105
       const detectedFloors=new Set<THREE.Mesh>()
       model.traverse(object=>{
@@ -1034,16 +1051,106 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       const sampled=[...levels.values()].sort((a,b)=>b.count-a.count)[0]
       if(sampled&&sampled.count>=4)authoredFloorY=Math.max(.045,Math.min(1.5,sampled.total/sampled.count+.045))
       sampled?.objects.forEach(object=>detectedFloors.add(object))
+      if(index===3){
+        const shellMeshes:THREE.Mesh[]=[]
+        model.traverse(object=>{if(object instanceof THREE.Mesh&&object.name.startsWith('house_'))shellMeshes.push(object)})
+        const project=(point:THREE.Vector3,axis:'floor'|'x-wall'|'z-wall')=>axis==='floor'?[(point.x/0.6),(point.z/0.6)]:axis==='x-wall'?[(point.z/0.6),(point.y/0.3)]:[(point.x/0.6),(point.y/0.3)]
+        for(const source of shellMeshes){
+          const geometry=source.geometry,indexAttribute=geometry.index
+          if(!indexAttribute)continue
+          source.updateWorldMatrix(true,false)
+          const position=geometry.getAttribute('position'),buckets=new Map<string,{indices:number[];kind:'floor'|'wall'|'backsplash';wall:number;axis:'floor'|'x-wall'|'z-wall'}>(),remaining:number[]=[]
+          for(let offset=0;offset<indexAttribute.count;offset+=3){
+            const a=indexAttribute.getX(offset),b=indexAttribute.getX(offset+1),c=indexAttribute.getX(offset+2),pa=new THREE.Vector3().fromBufferAttribute(position,a).applyMatrix4(source.matrixWorld),pb=new THREE.Vector3().fromBufferAttribute(position,b).applyMatrix4(source.matrixWorld),pc=new THREE.Vector3().fromBufferAttribute(position,c).applyMatrix4(source.matrixWorld),normal=pb.clone().sub(pa).cross(pc.clone().sub(pa)).normalize(),center=pa.clone().add(pb).add(pc).multiplyScalar(1/3)
+            let kind:'floor'|'wall'|'backsplash'|null=null,axis:'floor'|'x-wall'|'z-wall'='floor',wall=12
+            if(Math.abs(normal.y)>.78&&center.y<=authoredFloorY+.18)kind='floor'
+            else if(Math.abs(normal.y)<.22&&center.y>authoredFloorY+.22){axis=Math.abs(normal.x)>Math.abs(normal.z)?'x-wall':'z-wall';kind=center.y<authoredFloorY+1.55&&center.y>authoredFloorY+.72?'backsplash':'wall';wall=kind==='backsplash'?16:axis==='x-wall'?(normal.x<0?12:13):(normal.z<0?14:15)}
+            if(!kind){remaining.push(a,b,c);continue}
+            const key=`${kind}:${wall}`,bucket=buckets.get(key)??{indices:[],kind,wall,axis};bucket.indices.push(a,b,c);buckets.set(key,bucket)
+          }
+          if(!buckets.size)continue
+          const rest=geometry.clone();rest.setIndex(remaining);source.geometry=rest;geometries.add(rest)
+        for(const bucket of buckets.values()){
+            const surfaceGeometry=geometry.clone();surfaceGeometry.setIndex(bucket.indices)
+            const worldBounds=new THREE.Box3(),localBounds=new THREE.Box3(),vertexPoint=new THREE.Vector3();for(const vertex of bucket.indices){vertexPoint.fromBufferAttribute(position,vertex);localBounds.expandByPoint(vertexPoint);worldBounds.expandByPoint(vertexPoint.clone().applyMatrix4(source.matrixWorld))}
+            surfaceGeometry.boundingBox=localBounds;surfaceGeometry.boundingSphere=localBounds.getBoundingSphere(new THREE.Sphere())
+            const uv=new Float32Array(position.count*2),point=new THREE.Vector3()
+            for(let vertex=0;vertex<position.count;vertex++){point.fromBufferAttribute(position,vertex).applyMatrix4(source.matrixWorld);const coords=project(point,bucket.axis);uv[vertex*2]=coords[0];uv[vertex*2+1]=coords[1]}
+            surfaceGeometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));surfaceGeometry.computeVertexNormals();geometries.add(surfaceGeometry)
+            let material:THREE.MeshStandardMaterial
+            if(bucket.kind==='floor')material=floorMaterials[index]
+            else{wallMaterials[bucket.wall]??=new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.84,side:THREE.DoubleSide});material=wallMaterials[bucket.wall]}
+            materials.add(material)
+            const surface=new THREE.Mesh(surfaceGeometry,material);surface.name=`Cooking Club ${bucket.kind} ${bucket.wall}`;surface.position.copy(source.position);surface.quaternion.copy(source.quaternion);surface.scale.copy(source.scale);surface.userData.surfaceType=bucket.kind;surface.userData.repeat=1;surface.userData.physicalUV=true;surface.userData.floorRoom=index;surface.userData.floor=bucket.kind==='floor';surface.userData.wallId=bucket.wall;surface.castShadow=false;surface.receiveShadow=true;source.parent?.add(surface)
+            if(bucket.kind==='floor')cookingSurfaces.floor.push(surface)
+            else if(bucket.kind==='backsplash')cookingSurfaces.backsplash.push(surface)
+            else cookingSurfaces.walls.push(surface)
+            if(bucket.kind!=='floor')wallMeshes.push(surface)
+          }
+        }
+        cookingSurfaces.walls.concat(cookingSurfaces.backsplash).forEach(mesh=>{const id=mesh.userData.wallId as number;wallMaterials[id]??=mesh.material as THREE.MeshStandardMaterial})
+      }
       floor.position.y=authoredFloorY;wallGroup.position.y=authoredFloorY-.105
       model.traverse(object=>{
         if(!(object instanceof THREE.Mesh))return
         const isBackdrop=/(backdrop|window|glass)/i.test(object.name)
-        object.castShadow=!isBackdrop;object.receiveShadow=true;geometries.add(object.geometry)
+        object.castShadow=index===3?false:!isBackdrop;object.receiveShadow=true;geometries.add(object.geometry)
         const list=Array.isArray(object.material)?object.material:[object.material]
         list.forEach(material=>{materials.add(material);for(const value of Object.values(material))if(value instanceof THREE.Texture)textures.add(value)})
       })
-      const targets=[...detectedFloors].filter(object=>{const size=new THREE.Box3().setFromObject(object).getSize(new THREE.Vector3());return size.x>.8&&size.z>.8&&size.y<.45})
+      const targets=index===3&&cookingSurfaces.floor.length?cookingSurfaces.floor:[...detectedFloors].filter(object=>{const meshBounds=new THREE.Box3().setFromObject(object),meshSize=meshBounds.getSize(new THREE.Vector3());return meshSize.x>.8&&meshSize.z>.8&&meshSize.y<.45})
       floorTargets[index]=targets
+      if(index===3&&targets.length){
+        const floorBounds=new THREE.Box3();targets.forEach(target=>floorBounds.union(new THREE.Box3().setFromObject(target)))
+        const floorSize=floorBounds.getSize(new THREE.Vector3()),floorCenter=floorBounds.getCenter(new THREE.Vector3())
+        if(import.meta.env.DEV)console.info('Measured kitchen fit:',{scale,modelSize:size.toArray(),floorSize:floorSize.toArray(),floorCenter:floorCenter.toArray()})
+        floorPhysicalDimensions[index]={width:floorSize.x,depth:floorSize.z}
+        walkBounds[index]={walkX:Math.max(.25,floorSize.x/2-.3),walkZ:Math.max(.25,floorSize.z/2-.3)}
+        model.position.x-=floorCenter.x;model.position.z-=floorCenter.z-centres[index];group.updateMatrixWorld(true)
+        floorBounds.makeEmpty();targets.forEach(target=>floorBounds.union(new THREE.Box3().setFromObject(target)))
+        kitchenFloorY=floorBounds.max.y
+        kitchenWalkTriangles.length=0
+        for(const mesh of targets){
+          mesh.updateWorldMatrix(true,false)
+          const positions=mesh.geometry.getAttribute('position'),indices=mesh.geometry.index
+          if(!indices)continue
+          const a3=new THREE.Vector3(),b3=new THREE.Vector3(),c3=new THREE.Vector3()
+          for(let i=0;i<indices.count;i+=3){
+            a3.fromBufferAttribute(positions,indices.getX(i)).applyMatrix4(mesh.matrixWorld)
+            b3.fromBufferAttribute(positions,indices.getX(i+1)).applyMatrix4(mesh.matrixWorld)
+            c3.fromBufferAttribute(positions,indices.getX(i+2)).applyMatrix4(mesh.matrixWorld)
+            const a=new THREE.Vector2(a3.x,a3.z),b=new THREE.Vector2(b3.x,b3.z),c=new THREE.Vector2(c3.x,c3.z)
+            kitchenWalkTriangles.push({a,b,c,bounds:new THREE.Box2().setFromPoints([a,b,c])})
+          }
+        }
+
+        const cookingObjects:THREE.Mesh[]=[]
+        model.traverse(object=>{if(object instanceof THREE.Mesh&&!object.userData.surfaceType&&!object.name.startsWith('house_'))cookingObjects.push(object)})
+        const floorArea=Math.max(.1,floorSize.x*floorSize.z),solids:{bounds:THREE.Box3}[]=[]
+        for(const object of cookingObjects){
+          const name=object.name.toLowerCase(),bounds=new THREE.Box3().setFromObject(object),size=bounds.getSize(new THREE.Vector3()),area=size.x*size.z
+          if(!/(wood_|table_|oven|bar_|cooking[_ ]bench|seat_)/i.test(name)||size.y<.22||area>floorArea*.4)continue
+          walkObstacles.push(bounds);walkObstacleNames.push(object.name);solids.push({bounds})
+        }
+        const targetBounds=new THREE.Box3(),targetObjects=cookingObjects.filter(object=>/(oven_|bar_bar|cooking[_ ]bench)/i.test(object.name))
+        targetObjects.forEach(object=>targetBounds.union(new THREE.Box3().setFromObject(object)))
+        if(targetBounds.isEmpty())targetBounds.copy(floorBounds)
+        const target=targetBounds.getCenter(new THREE.Vector3()),minX=floorBounds.min.x+.55,maxX=floorBounds.max.x-.55,minZ=floorBounds.min.z+.55,maxZ=floorBounds.max.z-.55
+        let best:{x:number;z:number;score:number}|null=null,bestSafe:{x:number;z:number;clearance:number}|null=null
+        for(let x=minX;x<=maxX;x+=.25)for(let z=minZ;z<=maxZ;z+=.25){
+          const occupied=solids.some(({bounds})=>x>bounds.min.x-.28&&x<bounds.max.x+.28&&z>bounds.min.z-.28&&z<bounds.max.z+.28&&bounds.max.y>kitchenFloorY+.12&&bounds.min.y<kitchenFloorY+1.85)
+          if(occupied)continue
+          const distance=Math.hypot(target.x-x,target.z-z)
+          const blocked=solids.some(({bounds})=>!bounds.containsPoint(target)&&new THREE.Box3(new THREE.Vector3(Math.min(x,target.x),bounds.min.y,Math.min(z,target.z)),new THREE.Vector3(Math.max(x,target.x),bounds.max.y,Math.max(z,target.z))).intersectsBox(bounds))
+          const clearance=solids.reduce((nearest,{bounds})=>Math.min(nearest,Math.hypot(Math.max(bounds.min.x-x,0,x-bounds.max.x),Math.max(bounds.min.z-z,0,z-bounds.max.z))),1)
+          if(!bestSafe||clearance>bestSafe.clearance)bestSafe={x,z,clearance}
+          if(distance<1.45||distance>4.5)continue
+          const score=Math.abs(distance-2.6)*2+(blocked?4:0)-clearance*.35
+          if(!best||score<best.score)best={x,z,score}
+        }
+        const spawn=best??bestSafe??{x:floorCenter.x,z:floorCenter.z}
+        kitchenStart={x:spawn.x,z:spawn.z,yaw:Math.atan2(-(target.x-spawn.x),-(target.z-spawn.z))}
+      }
       if(targets.length&&index!==0&&index!==1){targets.forEach(object=>{
         // Imported floors often have missing/degenerate UVs. Project stable UVs
         // from world X/Z so every backend texture is visible at a true scale.
@@ -1052,7 +1159,11 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
         geometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));object.geometry=geometry;geometries.add(geometry);object.material=floorMaterial;object.receiveShadow=true;object.userData.floorRoom=index
       });floor.visible=false}
 
-      if(index===0){
+      if(index===3){
+        floor.visible=false
+        const kitchenFill=new THREE.PointLight('#fff0d7',3.7,8,2);kitchenFill.position.set(0,2.45,.4);group.add(kitchenFill)
+        if(import.meta.env.DEV)console.info('[Cooking Club navigation]',{floorHeight:kitchenFloorY,floorSize:floorPhysicalDimensions[index],walkBoundary:walkBounds[index],walkTriangles:kitchenWalkTriangles.length,colliders:walkObstacleNames})
+      }else if(index===0){
         setupModernLuxuryLivingRoom(group,model,authoredFloorY,floor,floorMaterial)
       }else if(index===1){
         setupRealisticModernBedroom(group,model,authoredFloorY,floor,floorMaterial,wallMaterials,wallMeshes)
@@ -1066,7 +1177,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   })
   // Load one room at a time. This avoids several large GLB/HDR responses
   // competing on the same HTTP/2 connection on hosted storefronts.
-  void (async()=>{for(const load of modelLoads){if(disposed)break;await load()}})()
+  void (async()=>{for(const index of [3,0,1,2]){if(disposed)break;await modelLoads[index]()}})()
   function updateFloorMaterial(room:number){
     const material=floorMaterials[room]
     if(!material)return
@@ -1104,7 +1215,8 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     const groutBump=tile.family!=='Wood'?getGroutBump(is2x4,repeatX,repeatY):null
     const scan={diffuse:tile.image,normal:tile.normal,roughness:tile.roughness}
     void Promise.all([loadTexture(scan.diffuse,repeatX,repeatY,true),scan.normal?loadTexture(scan.normal,repeatX,repeatY):Promise.resolve(null),scan.roughness?loadTexture(scan.roughness,repeatX,repeatY):Promise.resolve(null)]).then(([texture,normal,roughness])=>{
-      if(disposed||request!==floorLoads[room])return
+      if(disposed||request!==floorLoads[room]){texture.dispose();normal?.dispose();roughness?.dispose();return}
+      floorMaps[room].forEach(map=>map.dispose())
       floorMaps[room]=[texture,...(normal?[normal]:[]),...(roughness?[roughness]:[])]
       floorMeshes[room].visible=floorTargets[room].length===0||room===0||room===1
       material.color.set('#ffffff');material.map=texture;material.normalMap=normal;material.roughnessMap=roughness
@@ -1114,7 +1226,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     }).catch(error=>console.error(`Could not load tile ${tile.id}`,error))
   }
   function setWallStyle(wall:number,style:WallStyle){
-    const material=wallMaterials[wall],mesh=wallMeshes.find(item=>item.userData.wallId===wall)
+    const material=wallMaterials[wall],mesh=wallMeshes.find(item=>item.userData.wallId===wall&&item.userData.surfaceType==='wall')??wallMeshes.find(item=>item.userData.wallId===wall)
     // Note: we intentionally do NOT skip invisible meshes — the material update
     // must happen so that the style is live the moment the wall becomes visible.
     if(!material||!mesh||!/^#[\da-fA-F]{6}$/.test(style.color))return
@@ -1130,9 +1242,10 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       const bump=makeWallPattern(style,mesh.userData.repeat);wallMaps[wall]=bump
       material.bumpMap=bump;material.bumpScale=.003;material.roughness=.86;material.needsUpdate=true;return
     }
-    const repeat=style.repeat??mesh.userData.repeat
-    void Promise.all([fetchTexture(style.image),style.normal?fetchTexture(style.normal):Promise.resolve(null),style.roughness?fetchTexture(style.roughness):Promise.resolve(null)]).then(([texture,normal,roughness])=>{
+    const repeat=mesh.userData.physicalUV?1:(style.repeat??mesh.userData.repeat)
+    void Promise.all([loadTexture(style.image,repeat,repeat,true),style.normal?loadTexture(style.normal,repeat,repeat):Promise.resolve(null),style.roughness?loadTexture(style.roughness,repeat,repeat):Promise.resolve(null)]).then(([texture,normal,roughness])=>{
       if(disposed||request!==wallLoads[wall]){texture.dispose();normal?.dispose();roughness?.dispose();return}
+      wallMaps[wall]?.dispose();wallDetailMaps[wall].forEach(map=>map.dispose())
       wallMaps[wall]=texture;wallDetailMaps[wall]=[...(normal?[normal]:[]),...(roughness?[roughness]:[])]
       for(const map of [texture,normal,roughness])if(map){map.wrapS=map.wrapT=THREE.RepeatWrapping;map.repeat.set(repeat,repeat);map.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy())}
       texture.colorSpace=THREE.SRGBColorSpace
@@ -1142,12 +1255,31 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   }
   function pickSurface(raycaster:THREE.Raycaster){
     const floors=floorTargets.flat().concat(floorMeshes.filter(mesh=>mesh.visible))
-    const hit=raycaster.intersectObjects([...wallMeshes,...floors],false)[0]
+    const hit=raycaster.intersectObjects([...wallMeshes.filter(mesh=>mesh.visible),...floors],false)[0]
+    if(hit?.object.userData.surfaceType==='backsplash')return {kind:'backsplash' as const,id:16}
     if(typeof hit?.object.userData.wallId==='number')return {kind:'wall' as const,id:hit.object.userData.wallId as number}
     const floorRoom=hit?.object.userData.floorRoom??hit?.object.userData.room
     return typeof floorRoom==='number'?{kind:'floor' as const,id:floorRoom as number}:null
   }
-  function canStand(x:number,z:number){const room=importedRoomAt(x,z),entry=interiors[room];return Math.abs(x)<entry.walkX&&Math.abs(z-centres[room])<entry.walkZ}
+  function pointInKitchenFloor(x:number,z:number){return kitchenWalkTriangles.some(({a,b,c,bounds})=>{
+    if(x<bounds.min.x-1e-5||x>bounds.max.x+1e-5||z<bounds.min.y-1e-5||z>bounds.max.y+1e-5)return false
+    const abx=b.x-a.x,abz=b.y-a.y,bcx=c.x-b.x,bcz=c.y-b.y,cax=a.x-c.x,caz=a.y-c.y
+    const apx=x-a.x,apz=z-a.y,bpx=x-b.x,bpz=z-b.y,cpx=x-c.x,cpz=z-c.y
+    const d1=abx*apz-abz*apx,d2=bcx*bpz-bcz*bpx,d3=cax*cpz-caz*cpx
+    return (d1>=-1e-5&&d2>=-1e-5&&d3>=-1e-5)||(d1<=1e-5&&d2<=1e-5&&d3<=1e-5)
+  })}
+  function canStand(x:number,z:number){
+    const room=importedRoomAt(x,z),bounds=walkBounds[room]
+    if(room!==3)return Math.abs(x)<bounds.walkX&&Math.abs(z-centres[room])<bounds.walkZ
+    if(!kitchenWalkTriangles.length){if(Math.abs(x)>=bounds.walkX||Math.abs(z-centres[room])>=bounds.walkZ)return false}
+    else if(![[x,z],[x-.22,z],[x+.22,z],[x,z-.22],[x,z+.22]].every(([px,pz])=>pointInKitchenFloor(px!,pz!)))return false
+    const radiusSq=.22*.22
+    return !walkObstacles.some(box=>{
+      if(box.max.y<=kitchenFloorY+.12||box.min.y>=kitchenFloorY+1.85)return false
+      const nearestX=THREE.MathUtils.clamp(x,box.min.x,box.max.x),nearestZ=THREE.MathUtils.clamp(z,box.min.z,box.max.z)
+      return (x-nearestX)**2+(z-nearestZ)**2<radiusSq
+    })
+  }
   function dispose(){disposed=true;geometries.forEach(geometry=>geometry.dispose());materials.forEach(material=>material.dispose());textures.forEach(texture=>texture.dispose());cachedTextures.forEach(texture=>texture.dispose());wallMaps.forEach(texture=>texture?.dispose());wallDetailMaps.forEach(maps=>maps.forEach(texture=>texture.dispose()));floorMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});wallMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});environment?.dispose()}
-  return {scene,applyTile,setWallStyle,pickSurface,canStand,floorMeshes,setFloorReflection,dispose}
+  return {scene,applyTile,setWallStyle,pickSurface,canStand,floorMeshes,setFloorReflection,getKitchenStart:()=>kitchenStart,getKitchenFloorHeight:()=>kitchenFloorY,getKitchenNavigation:()=>({floorHeight:kitchenFloorY,floorSize:floorPhysicalDimensions[3],walkBoundary:walkBounds[3],colliders:walkObstacleNames}),dispose}
 }
