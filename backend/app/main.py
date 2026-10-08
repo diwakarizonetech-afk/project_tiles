@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 
 from .config import ALLOWED_IMAGE_TYPES, CATALOG_DIR, CORS_ORIGINS, MAX_UPLOAD_BYTES, UPLOAD_DIR, VR_ALLOWED_ORIGINS, VR_DEFAULT_MOVEMENT_SPEED, VR_ENABLED, VR_REQUIRE_HTTPS, VR_ROOM_SCALE, VR_TELEPORT_ENABLED
 from .database import Base, engine, get_db
-from .models import TileDesign
-from .schemas import TileDesignOut, VrSettingsOut
+from .database import Base, engine, get_db
+from .models import TileDesign, Inquiry
+from .schemas import TileDesignOut, VrSettingsOut, InquiryIn, InquiryOut
 
 CODE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9-]{2,24}$")
 FAMILIES = {"Marble", "Stone", "Terrazzo", "Wood", "Pattern"}
@@ -21,6 +22,8 @@ SURFACES = {"Floor", "Wall", "Both"}
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    CATALOG_DIR.mkdir(parents=True, exist_ok=True)
+    Base.metadata.create_all(bind=engine)
     yield
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -130,3 +133,21 @@ def delete_tile_design(code: str, db: Session = Depends(get_db)):
     db.commit()
     if image:
         image.unlink(missing_ok=True)
+
+@app.post("/api/inquiries", response_model=InquiryOut, status_code=status.HTTP_201_CREATED)
+def create_inquiry(inquiry_in: InquiryIn, db: Session = Depends(get_db)):
+    inquiry = Inquiry(
+        name=inquiry_in.name,
+        contact=inquiry_in.contact,
+        message=inquiry_in.message
+    )
+    db.add(inquiry)
+    db.commit()
+    db.refresh(inquiry)
+    return inquiry
+
+@app.get("/api/inquiries", response_model=list[InquiryOut])
+def list_inquiries(db: Session = Depends(get_db)):
+    inquiries = db.scalars(select(Inquiry).order_by(Inquiry.created_at.desc())).all()
+    return inquiries
+

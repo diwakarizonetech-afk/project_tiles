@@ -1257,6 +1257,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     const floors=floorTargets.flat().concat(floorMeshes.filter(mesh=>mesh.visible))
     const hit=raycaster.intersectObjects([...wallMeshes.filter(mesh=>mesh.visible),...floors],false)[0]
     if(hit?.object.userData.surfaceType==='backsplash')return {kind:'backsplash' as const,id:16}
+    if(hit?.object.userData.floor)return {kind:'floor' as const,id:hit.object.userData.floorRoom as number}
     if(typeof hit?.object.userData.wallId==='number')return {kind:'wall' as const,id:hit.object.userData.wallId as number}
     const floorRoom=hit?.object.userData.floorRoom??hit?.object.userData.room
     return typeof floorRoom==='number'?{kind:'floor' as const,id:floorRoom as number}:null
