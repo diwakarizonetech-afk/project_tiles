@@ -26,3 +26,16 @@ class TileDesignOut(BaseModel):
     sort_order: int
     built_in: bool
     created_at: datetime
+
+class InquiryIn(BaseModel):
+    name: str
+    contact: str
+    message: str
+
+class InquiryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    contact: str
+    message: str
+    created_at: datetime

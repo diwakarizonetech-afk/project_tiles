@@ -48,7 +48,7 @@ export function buildHouse(renderer:THREE.WebGLRenderer) {
   }
   const plaster=tactile('#e9dccd','paint'),oak=tactile('#875c42','wood'),cream=mat('#d6aa7e'),dark=mat('#253a3b'),brass=mat('#c7995b',.24,.7),white=mat('#f0e8db'),green=mat('#286f57'),glass=new THREE.MeshPhysicalMaterial({color:'#c4e0df',transparent:true,opacity:.16,roughness:.1,metalness:.05,side:THREE.DoubleSide})
   const countertop=new THREE.MeshStandardMaterial({color:'#e7e1d8',roughness:.23})
-  const defaultWallColours=['#aa5946','#33757a','#75566e','#347284']
+  const defaultWallColours=['#aa5946','#ede8e0','#75566e','#f0ece6']
   const finishMaps=new Map<WallDesign,THREE.CanvasTexture>()
   function finishMap(design:WallDesign){
     const cached=finishMaps.get(design);if(cached)return cached
@@ -332,88 +332,231 @@ export function buildHouse(renderer:THREE.WebGLRenderer) {
   for(const x of [3.48,4.4,5.32])cabinetDoor(x,.53,.88,.73,4.165,cabinet,cabinetInset)
   for(const x of [3.6,5.2]){cylinder(.3,.3,.1,x,.67,4.65,oak);for(const dx of [-.16,.16])for(const dz of [-.16,.16])box(.035,.62,.035,x+dx,.31,4.65+dz,dark);obstacles.push({x,z:4.65,w:.6,d:.6});cylinder(.016,.016,.85,x,3.1,3.6,brass);cylinder(.3,.18,.28,x,2.59,3.6,cream)}
   cylinder(.25,.12,.09,4.4,1.0125,3.6,oak);for(const dx of [-.1,0,.1])ball(.09,4.4+dx,1.10,3.6,mat('#c79b42'))
-  // Reference-inspired bedroom. One bed only; no overlapping imported bed.
-  const bedding=tactile('#ded5c7','cloth'),walnut=tactile('#685040','wood'),charcoal=tactile('#393934','cloth')
-  const headwall=box(5.4,3.35,.12,-4,1.675,-7.68,wallMaterials[10])
-  headwall.userData.wallFaces={0:10,1:10,2:10,3:10,4:10,5:10};wallMeshes.push(headwall)
-  box(2.86,1.35,.22,-4,.9,-7.43,charcoal,false,.09)
-  box(2.75,.36,3.1,-4,.28,-5.85,walnut,true,.08)
-  box(2.7,.3,3.02,-4,.60,-5.85,bedding,false,.13)
-  // Subdivided cloth with a rounded drape and shallow deterministic folds.
-  const quiltGeometry=new THREE.PlaneGeometry(3.22,2.58,52,44)
-  const quiltPositions=quiltGeometry.attributes.position
-  for(let i=0;i<quiltPositions.count;i++){
-    const x=quiltPositions.getX(i),v=quiltPositions.getY(i)
-    const edge=Math.max(0,Math.abs(x)-1.22)
-    const foot=Math.max(0,-v-.86)
-    const folds=.018*Math.sin(x*21+v*6)+.014*Math.sin(v*26+x*4)
-    quiltPositions.setXYZ(i,x,.83-edge*1.18-foot*.75+folds,-5.25-v)
+  // ── Modern bedroom – realistic real-estate look ──────────────────────────
+  // Materials (prefixed 'bed' to avoid conflict with living-room 'linen')
+  const bedLinen=tactile('#c8cdd4','cloth')        // soft grey-blue linen (realistic bed)
+  const bedLinenDark=tactile('#9aa3ae','cloth')    // darker contrast linen for quilt top
+  const bedWalnut=tactile('#6b4c38','wood')        // warm walnut for bed frame & furniture
+  const concretePanel=mat('#7a7d80',.82)           // slate/concrete headboard panel
+  const bedWarmWhite=mat('#f2ede6',.55)            // walls / wardrobe finish
+  const bedNaturalOak=tactile('#a07850','wood')    // lighter oak for floating shelf
+  const bedRugCloth=tactile('#8d8478','cloth')     // charcoal-tone area rug
+
+  // ── Bedroom walls – correct indices 4-7 (room 1 × 4 + side 0-3) ─────────
+  // West wall (index 4) – headboard accent wall: concrete/dark grey
+  const bedHeadWall=wallFace(box(7.6,3.5,.18,4,1.75,-8,plaster,true),{5:7})
+  void bedHeadWall
+  // East wall (index 5)
+  const bedEastWall=wallFace(box(7.6,3.5,.18,4,1.75,0,plaster,true),{4:6})
+  void bedEastWall
+  // North wall (index 6) – already covered by shared partition, but set its material
+  // South wall (index 7) is the exterior window wall
+
+  // ── Concrete headboard accent panel on the north wall ────────────────────
+  // Mounted on north interior face at x≈4, z≈-8 wall
+  box(3.8,1.6,.06,-4,1.2,-7.72,concretePanel,false,.04)
+  // Slim LED strip at bottom of panel
+  const bedroomCove=new THREE.MeshStandardMaterial({color:'#ffecc0',emissive:'#ffd990',emissiveIntensity:2.4})
+  box(3.6,.018,.04,-4,.44,-7.72,bedroomCove)
+  // Thin oak trim at top of panel
+  box(3.85,.055,.08,-4,2.025,-7.72,bedWalnut,false,.008)
+
+  // ── Bed frame – walnut platform bed ──────────────────────────────────────
+  // Base platform
+  box(2.9,.18,2.2,-4,.09,-6.4,bedWalnut,true,.06)
+  // Slightly raised mattress base
+  box(2.78,.12,2.1,-4,.27,-6.4,bedWarmWhite,false,.04)
+  // Mattress
+  box(2.72,.26,2.05,-4,.44,-6.4,bedLinen,false,.08)
+  // Flat headboard (concrete panel) rising from platform
+  box(2.86,.95,.14,-4,.92,-7.42,concretePanel,false,.06)
+  // Walnut cap rail on headboard
+  box(2.92,.055,.16,-4,1.415,-7.42,bedWalnut,false,.01)
+
+  // ── Realistic quilt / duvet – grey-blue linen, smooth drape ──────────────
+  const quiltGeometry=new THREE.PlaneGeometry(2.82,2.14,56,46)
+  const quiltPos=quiltGeometry.attributes.position
+  for(let i=0;i<quiltPos.count;i++){
+    const x=quiltPos.getX(i),v=quiltPos.getY(i)
+    const edge=Math.max(0,Math.abs(x)-1.1)*.55
+    const foot=Math.max(0,-v-.72)*.6
+    const folds=.012*Math.sin(x*18+v*5)+.009*Math.sin(v*22+x*3)*.5
+    quiltPos.setXYZ(i,x,.72-edge-foot+folds,-6.32-v*.96)
   }
   quiltGeometry.computeVertexNormals()
-  const quilt=new THREE.Mesh(quiltGeometry,bedding);quilt.position.x=-4;quilt.castShadow=true;quilt.receiveShadow=true;scene.add(quilt)
-  for(const x of [-4.7,-3.3]){
-    const pillow=box(1.12,.22,.68,x,.89,-6.87,bedding,false,.11);pillow.rotation.x=.22
-    const cushion=box(.64,.52,.19,x,1.05,-6.61,charcoal,false,.08);cushion.rotation.x=-.14
+  const quilt=new THREE.Mesh(quiltGeometry,bedLinenDark);quilt.position.x=-4;quilt.castShadow=true;quilt.receiveShadow=true;scene.add(quilt)
+  // Quilt fold-over at top showing lighter linen inner
+  const foldGeom=new THREE.PlaneGeometry(2.72,.28,28,4);const foldPos=foldGeom.attributes.position
+  for(let i=0;i<foldPos.count;i++){const v=foldPos.getY(i);foldPos.setXYZ(i,foldPos.getX(i),.75-.06*v,-6.68+.18*v)}
+  foldGeom.computeVertexNormals()
+  const fold=new THREE.Mesh(foldGeom,bedLinen);fold.position.x=-4;fold.castShadow=true;scene.add(fold)
+
+  // ── Pillows – realistic stacked arrangement ───────────────────────────────
+  for(const x of [-4.72,-3.28]){
+    const pillow=box(1.04,.18,.62,x,.67,-7.26,bedLinen,false,.12);pillow.rotation.x=.18
+    const pillow2=box(.98,.16,.58,x,.88,-7.24,bedWarmWhite,false,.10);pillow2.rotation.x=.15
   }
-  const accent=box(.56,.39,.19,-3.9,.99,-6.36,tactile('#b59a65','cloth'),false,.08);accent.rotation.z=.08
-  for(const x of [-5.95,-2.05]){
-    box(.76,.52,.7,x,.37,-6.86,walnut,true,.035)
-    box(.66,.018,.018,x,.46,-6.493,brass)
-    cylinder(.12,.14,.028,x,.656,-6.86,brass);cylinder(.019,.019,.36,x,.85,-6.86,brass)
-    cylinder(.20,.24,.28,x,1.13,-6.86,tactile('#e6d8bb','cloth'))
-    cylinder(.12,.12,.015,x,.989,-6.86,glow)
+  // Small decorative cushion centre
+  const deco=box(.62,.38,.18,-4,.88,-7.08,tactile('#8fa3b0','cloth'),false,.09);deco.rotation.z=.06
+
+  // ── Bedside tables – floating walnut wall-mounted ─────────────────────────
+  for(const x of [-5.8,-2.2]){
+    // Floating shelf table
+    box(.7,.04,.52,x,.72,-7.2,bedWalnut,false,.01)
+    // Small drawer body
+    box(.66,.28,.48,x,.56,-7.2,bedWalnut,false,.02)
+    // Brass pull
+    box(.22,.018,.02,x,.56,-6.95,brass,false,.005)
+    // Bedside lamp – ceramic base
+    cylinder(.12,.16,.32,x,.88,-7.2,bedWarmWhite)
+    // Lamp shade
+    const shadeGeom=new THREE.CylinderGeometry(.18,.22,.28,16,1,true);const shadeMat=new THREE.MeshStandardMaterial({color:'#f0e4c8',roughness:.92,side:THREE.DoubleSide,transparent:true,opacity:.82});const shade=new THREE.Mesh(shadeGeom,shadeMat);shade.position.set(x,1.12,-7.2);shade.castShadow=true;scene.add(shade)
+    // Lamp glow disc
+    const lampGlow=new THREE.MeshStandardMaterial({color:'#ffeaaa',emissive:'#ffda88',emissiveIntensity:2.8})
+    cylinder(.08,.08,.012,x,1.25,-7.2,lampGlow)
+    // Point light for bedside lamp
+    const bedLight=new THREE.PointLight('#fff0cc',4.5,2.8,2);bedLight.position.set(x,1.3,-7.1);scene.add(bedLight)
   }
-  box(3.85,.018,3.7,-4,.019,-4.95,tactile('#aaa08f','cloth'),false,.008)
-  // Warm headboard washers: no extra shadow maps.
-  for(const x of [-5.7,-4,-2.3]){
-    cylinder(.08,.08,.025,x,3.43,-7.08,brass)
-    cylinder(.058,.058,.027,x,3.411,-7.08,glow)
-    const light=new THREE.SpotLight('#ffe1ab',5,4,.48,.75,1.6);light.position.set(x,3.35,-7.08);light.target.position.set(x,1.6,-7.62);scene.add(light,light.target)
+
+  // ── Area rug under bed ────────────────────────────────────────────────────
+  box(4.2,.012,3.2,-4,.006,-6.2,bedRugCloth,false,.01)
+
+  // ── Wardrobe / built-in closet on west wall ───────────────────────────────
+  box(2.4,2.85,.62,-6.4,1.425,-5.6,bedWarmWhite,true,.03)
+  // Three wardrobe doors
+  for(const xd of [-6.9,-6.4,-5.9]){
+    box(.78,2.7,.04,xd,1.425,-5.28,bedWarmWhite,false,.01)
+    box(.74,2.66,.018,xd,1.425,-5.26,mat('#e8e4dc',.45),false,.01)
+    // Brass bar handle
+    cylinder(.012,.012,.24,xd+.31,1.42,-5.24,brass);cylinder(.012,.012,.024,xd+.31,.74,-5.24,brass);cylinder(.012,.012,.024,xd+.31,2.1,-5.24,brass)
   }
+  // Wardrobe top cap
+  box(2.46,.055,.64,-6.4,2.87,-5.6,bedWarmWhite,false,.008)
+
+  // ── Floating wall shelf (above wardrobe / art area) ───────────────────────
+  box(3.6,.06,.28,-4,2.72,-7.72,bedNaturalOak,false,.01)
+  // Shelf items: small framed prints
+  for(const x of [-5.1,-4,-2.9]){
+    box(.28,.38,.04,x,2.93,-7.7,bedWalnut,false,.005)
+    box(.24,.33,.01,x,2.93,-7.68,bedWarmWhite,false,.003)
+  }
+  // Small decor vase on shelf
+  cylinder(.055,.07,.18,-4.6,2.87,-7.7,mat('#c4b8a4',.55))
+  cylinder(.04,.055,.06,-4.6,2.97,-7.7,bedWalnut)
+
+  // ── Bedroom wall art ─────────────────────────────────────────────────────
   artwork(-7.84,2,-4.5,1.3,1.7,'/art/botanical.png')
-  // Bathroom: dry vanity on the right, open shower on the left; window stays clear.
-  const bathWood=tactile('#aa8968','wood'),stone=mat('#cbbda7',.8),porcelain=mat('#f0eee7',.2)
-  box(2.12,.53,.65,6.18,.77,-7.44,bathWood,true,.025)
-  for(let x=5.17;x<7.23;x+=.045)box(.022,.46,.025,x,.79,-7.102,bathWood,false,.007)
-  box(2.2,.065,.76,6.18,1.068,-7.42,countertop,false,.022)
-  box(1.96,.018,.035,6.18,.491,-7.12,glow)
-  // Lathed hollow ceramic basin, with a real rim instead of a solid cylinder.
-  const basinPoints=[new THREE.Vector2(.035,0),new THREE.Vector2(.22,0),new THREE.Vector2(.34,.13),new THREE.Vector2(.35,.17),new THREE.Vector2(.327,.175),new THREE.Vector2(.305,.14),new THREE.Vector2(.19,.03),new THREE.Vector2(.035,.028)]
-  const basin=new THREE.Mesh(new THREE.LatheGeometry(basinPoints,48),porcelain);basin.position.set(6.18,1.105,-7.32);scene.add(basin)
-  cylinder(.028,.028,.006,6.18,1.138,-7.32,brass)
-  cylinder(.022,.022,.34,6.18,1.28,-7.69,brass);box(.035,.035,.23,6.18,1.445,-7.585,brass,false,.01)
+  // Extra framed art above bed on concrete panel
+  const artFrame=box(1.4,.98,.05,-4,1.52,-7.68,bedWalnut,false,.01);void artFrame
+  const artCanvas=box(1.3,.88,.01,-4,1.52,-7.64,bedWarmWhite,false,.005);void artCanvas
+
+  // ── Ceiling washers for bedroom (warm focused) ────────────────────────────
+  for(const x of [-5.5,-4,-2.5]){
+    cylinder(.07,.07,.022,x,3.43,-7.08,brass)
+    cylinder(.052,.052,.024,x,3.412,-7.08,bedroomCove)
+    const bspot=new THREE.SpotLight('#ffe4b5',6,4.5,.45,.7,1.8);bspot.position.set(x,3.35,-7.08);bspot.target.position.set(x,1.4,-7.55);scene.add(bspot,bspot.target)
+  }
+  // ── Modern luxury bathroom – spacious, spa-like real-estate look ────────────────────
+  const bathStone=mat('#d6d0c6',.60)                     // natural stone countertop & tray
+  const bathPorcelain=mat('#f4f1ed',.14)                 // high-gloss white porcelain fixtures
+  const bathBrass=mat('#c39654',.19,.80)                 // brushed warm gold taps & rail
+  const bathChrome=mat('#c4c9c9',.07,.95)                // brushed chrome panel accents
+  const bathShadeGlass=new THREE.MeshPhysicalMaterial({color:'#d4e4e0',transparent:true,opacity:.10,roughness:.04,metalness:.06,side:THREE.DoubleSide})
+  const bathVanityWood=tactile('#7a5a3e','wood')         // warm walnut floating vanity
+  const bathLED=new THREE.MeshStandardMaterial({color:'#fff8e8',emissive:'#ffedcc',emissiveIntensity:2.6})
   function wallDisc(radius:number,depth:number,x:number,y:number,z:number,material:THREE.Material){
     const disc=cylinder(radius,radius,depth,x,y,z,material);disc.rotation.x=Math.PI/2;return disc
   }
-  wallDisc(.735,.035,6.18,2.14,-7.82,glow)
-  wallDisc(.705,.045,6.18,2.14,-7.787,brass)
-  // Environment-lit metal surface; avoids a costly second scene render in VR.
-  wallDisc(.684,.047,6.18,2.14,-7.755,mat('#b8bbb4',.075,1))
-  cylinder(.065,.07,.17,7.04,1.19,-7.4,mat('#655b42',.28));cylinder(.028,.028,.04,7.04,1.295,-7.4,brass)
-  box(2.25,.045,2.5,1.35,.028,-6.56,stone,false,.02)
-  box(.018,2.62,2.46,2.49,1.34,-6.56,glass,true)
-  for(const z of [-7.79,-5.33])box(.018,2.65,.024,2.49,1.34,z,brass)
-  box(.024,.022,2.46,2.49,2.66,-6.56,brass)
-  // Shower head, mixer, hose and a narrow stone shelf.
-  cylinder(.02,.02,1.23,.35,1.93,-7.74,brass)
-  box(.76,.03,.03,.72,2.55,-7.74,brass)
-  cylinder(.22,.22,.026,1.08,2.53,-7.74,brass)
-  wallDisc(.075,.055,.35,1.25,-7.71,brass)
-  const hoseCurve=new THREE.CatmullRomCurve3([new THREE.Vector3(.35,1.22,-7.65),new THREE.Vector3(.50,.73,-7.59),new THREE.Vector3(.78,.81,-7.59),new THREE.Vector3(.71,1.51,-7.65)])
-  scene.add(new THREE.Mesh(new THREE.TubeGeometry(hoseCurve,28,.009,6,false),brass))
-  box(.9,.05,.19,1.35,1.34,-7.77,stone,false,.014)
-  for(const x of [1.12,1.37]){cylinder(.044,.045,.16,x,1.445,-7.74,mat('#676553'));cylinder(.021,.021,.026,x,1.54,-7.74,brass)}
-  box(1.45,.008,.055,1.28,.055,-7.62,mat('#55524a',.3,.5))
-  // Wall-hung WC faces into the room from the east wall.
-  box(.32,1.16,1.15,7.73,.58,-3.66,wallMaterials[13],true,.025)
-  const wc=ball(.4,7.31,.46,-3.66,porcelain,1.25,.68,.83)
-  wc.receiveShadow=true
-  const seat=new THREE.Mesh(new THREE.TorusGeometry(.27,.038,10,40),porcelain)
-  seat.rotation.x=Math.PI/2;seat.scale.y=1.4;seat.position.set(7.20,.66,-3.66);scene.add(seat)
-  box(.51,.045,.62,7.23,.695,-3.66,porcelain,false,.10)
-  box(.018,.18,.28,7.551,.98,-3.66,brass,false,.02)
-  obstacles.push({x:7.24,z:-3.66,w:1.15,d:.8})
-  box(1.65,.018,.9,6.05,.02,-6.05,tactile('#c9c0ad','cloth'),false,.008)
+  void wallDisc // keep function available for mirror/accessory use
+
+  // ── Double floating vanity (north wall) ──────────────────────────────────────────
+  box(2.4,.50,.54,6.22,.75,-7.58,bathVanityWood,true,.02)
+  box(2.36,.016,.022,6.22,.49,-7.34,bathLED)              // floating LED shadow gap
+  box(2.52,.040,.60,6.22,1.02,-7.57,bathStone,false,.01)  // stone countertop
+  // Two vessel sinks (lathe geometry)
+  const vPts=[new THREE.Vector2(.04,0),new THREE.Vector2(.205,0),new THREE.Vector2(.30,.086),new THREE.Vector2(.308,.128),new THREE.Vector2(.287,.136),new THREE.Vector2(.265,.092),new THREE.Vector2(.155,.022),new THREE.Vector2(.04,.021)]
+  const vGeom=new THREE.LatheGeometry(vPts,42)
+  const sink1=new THREE.Mesh(vGeom,bathPorcelain);sink1.position.set(5.44,1.07,-7.3);sink1.castShadow=true;scene.add(sink1)
+  const sink2=new THREE.Mesh(vGeom,bathPorcelain);sink2.position.set(7.0,1.07,-7.3);sink2.castShadow=true;scene.add(sink2)
+  // Slim gooseneck wall-mount taps
+  for(const tx of [5.44,7.0]){
+    cylinder(.015,.015,.28,tx,1.32,-7.67,bathBrass)
+    box(.02,.02,.22,tx,1.32,-7.57,bathBrass,false,.006)
+    cylinder(.03,.03,.007,tx,1.335,-7.46,bathBrass)
+  }
+
+  // ── Large backlit mirror panel ─────────────────────────────────────────────────
+  box(2.38,.013,.016,6.22,1.76,-7.83,bathLED)             // top LED strip
+  box(2.38,.013,.016,6.22,1.02,-7.83,bathLED)             // bottom LED strip
+  box(2.32,.72,.014,6.22,1.39,-7.82,new THREE.MeshStandardMaterial({color:'#bdc8c6',roughness:.03,metalness:.94}),false,.005)
+
+  // ── Freestanding oval soaking bathtub (centre of room) ─────────────────────────
+  const tubOuter=new THREE.Mesh(new THREE.CylinderGeometry(.76,.70,.46,42,1),bathPorcelain)
+  tubOuter.scale.set(1.62,1,.87);tubOuter.position.set(4,.23,-5.5);tubOuter.castShadow=true;tubOuter.receiveShadow=true;scene.add(tubOuter)
+  const tubInner=new THREE.Mesh(new THREE.CylinderGeometry(.62,.58,.26,42,1),mat('#d8d4ce',.22))
+  tubInner.scale.set(1.62,1,.87);tubInner.position.set(4,.34,-5.5);scene.add(tubInner)
+  const tubBase=new THREE.Mesh(new THREE.CylinderGeometry(.80,.80,.052,42,1),bathStone)
+  tubBase.scale.set(1.64,1,.89);tubBase.position.set(4,.026,-5.5);scene.add(tubBase)
+  cylinder(.02,.02,.50,5.15,.41,-5.5,bathBrass)           // floor-mount filler tap
+  box(.026,.026,.24,5.15,.68,-5.5,bathBrass,false,.006)
+  cylinder(.082,.082,.016,5.15,.028,-5.5,bathBrass)
+  obstacles.push({x:4,z:-5.5,w:2.8,d:1.64})
+
+  // ── Walk-in rain shower (north-west corner, open-plan) ──────────────────────────
+  box(2.0,.040,1.98,1.0,.020,-6.87,bathStone,false,.016)  // shower tray
+  box(1.76,.012,.055,1.0,.052,-5.88,bathChrome,false,.004) // linear drain channel
+  box(.015,2.16,1.98,2.02,1.08,-6.87,bathShadeGlass,false) // frameless glass panel
+  box(.018,2.20,.016,2.02,1.1,-7.88,bathBrass)            // glass edge trim
+  box(.018,2.20,.016,2.02,1.1,-5.88,bathBrass)            // glass edge trim
+  box(.48,.015,.48,1.0,3.36,-7.3,bathChrome,false,.009)   // ceiling rain head 500mm
+  cylinder(.015,.015,.10,1.0,3.26,-7.3,bathBrass)         // ceiling arm
+  box(.095,.26,.036,.17,1.50,-6.38,bathChrome,false,.008) // thermostatic panel
+  for(const cy of [1.42,1.60])cylinder(.036,.036,.040,.17,cy,-6.36,bathBrass)
+  box(.022,1.0,.022,.17,1.9,-6.92,bathBrass,false,.005)   // body-spray bar
+  for(const sy of [1.45,1.72,1.99,2.26])cylinder(.030,.030,.026,.17,sy,-6.92,bathBrass)
+  box(.52,.072,.16,.06,.036,-6.35,bathStone,false,.01)    // recessed niche shelf
+
+  // ── Wall-hung WC (concealed cistern, rimless modern) ───────────────────────────
+  box(.34,.90,.15,7.72,.63,-3.55,bathStone,true,.016)     // flush cistern panel
+  const wcBowl=new THREE.Mesh(new THREE.CylinderGeometry(.265,.205,.165,36),bathPorcelain)
+  wcBowl.scale.set(1.28,1,.94);wcBowl.position.set(7.20,.485,-3.55);wcBowl.castShadow=true;scene.add(wcBowl)
+  const wcTorus=new THREE.Mesh(new THREE.TorusGeometry(.25,.028,8,36),bathPorcelain)
+  wcTorus.rotation.x=Math.PI/2;wcTorus.scale.x=1.28;wcTorus.scale.y=.94;wcTorus.position.set(7.20,.588,-3.55);scene.add(wcTorus)
+  box(.52,.016,.48,7.20,.61,-3.55,mat('#f0ece6',.30),false,.065)  // slim WC seat
+  box(.155,.08,.010,7.72,.88,-3.55,bathChrome,false,.005)         // flush plate
+  obstacles.push({x:7.22,z:-3.55,w:.98,d:.66})
+
+  // ── Heated towel rail (east wall, ladder-style brass) ────────────────────────────
+  for(const zr of [-5.72,-5.24])cylinder(.019,.019,1.35,7.76,1.15,zr,bathBrass)
+  for(const zb of [-5.72,-5.48,-5.24])cylinder(.019,.019,.50,7.76,1.1,zb,bathBrass)
+  box(.014,.38,.50,7.76,1.19,-5.48,tactile('#e8e4de','cloth'),false,.006) // hung towel
+
+  // ── Vanity accessories ───────────────────────────────────────────────────────────
+  cylinder(.042,.050,.14,5.62,1.075,-7.26,bathChrome)     // soap dispenser (left sink)
+  cylinder(.013,.013,.055,5.62,1.205,-7.26,bathBrass)
+  cylinder(.042,.050,.14,7.18,1.075,-7.26,bathChrome)     // soap dispenser (right sink)
+  cylinder(.013,.013,.055,7.18,1.205,-7.26,bathBrass)
+  // Small potted plant on vanity
+  cylinder(.06,.08,.12,6.72,1.06,-7.26,mat('#7a5a35',.72))
+  cylinder(.02,.018,.9,6.72,1.18,-7.26,mat('#2f6040',.72))
+  for(let bi=0;bi<5;bi++){const ba=bi*1.26;ball(.055,6.72+Math.sin(ba)*.055,1.30+bi*.035,-7.26+Math.cos(ba)*.055,mat('#3d7050'),.38,1.8,.38)}
+  // Floating shelf on east wall with decor
+  box(1.0,.045,.20,7.3,1.55,-5.5,bathVanityWood,false,.008)
+  cylinder(.055,.065,.15,7.55,1.62,-5.46,mat('#b0a090',.62))  // stone jar
+  cylinder(.038,.038,.22,7.08,1.62,-5.46,bathPorcelain)       // bud vase
+
+  // ── Bathroom lighting ────────────────────────────────────────────────────────────
+  // Recessed ceiling spots over vanity
+  for(const lx of [5.44,6.22,7.0]){
+    cylinder(.052,.052,.014,lx,3.48,-7.18,bathLED)
+    const vs=new THREE.SpotLight('#fff8e8',9,5.5,.36,.72,2);vs.position.set(lx,3.42,-7.08);vs.target.position.set(lx,1.04,-7.32);scene.add(vs,vs.target)
+  }
+  cylinder(.052,.052,.014,4,3.48,-5.5,bathLED)            // over bathtub
+  const tl=new THREE.PointLight('#fff4ec',5.5,5,2);tl.position.set(4,3.05,-5.5);scene.add(tl)
+  cylinder(.052,.052,.014,1.0,3.48,-6.87,bathLED)         // shower zone
+  const sl=new THREE.PointLight('#f0f8ff',4,3.5,2);sl.position.set(1.0,3.2,-6.87);scene.add(sl)
+  const ml=new THREE.PointLight('#fffaf0',3.5,3,2);ml.position.set(6.22,1.42,-7.52);scene.add(ml)  // mirror fill
+  const bf=new THREE.PointLight('#fff8f4',2.5,9,1.6);bf.position.set(4.5,2.6,-4.8);scene.add(bf)  // ambient fill
   for(const x of [-4,4]){
     box(7.5,.016,.04,x,3.42,-7.79,glow)
     box(7.6,.06,.20,x,3.46,-7.79,plaster)

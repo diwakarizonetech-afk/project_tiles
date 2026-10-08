@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 
 from .config import ALLOWED_IMAGE_TYPES, CATALOG_DIR, CORS_ORIGINS, MAX_UPLOAD_BYTES, UPLOAD_DIR, VR_ALLOWED_ORIGINS, VR_DEFAULT_MOVEMENT_SPEED, VR_ENABLED, VR_REQUIRE_HTTPS, VR_ROOM_SCALE, VR_TELEPORT_ENABLED
 from .database import Base, engine, get_db
-from .models import TileDesign
-from .schemas import TileDesignOut, VrSettingsOut
+from .database import Base, engine, get_db
+from .models import TileDesign, Inquiry
+from .schemas import TileDesignOut, VrSettingsOut, InquiryIn, InquiryOut
 
 CODE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9-]{2,24}$")
 FAMILIES = {"Marble", "Stone", "Terrazzo", "Wood", "Pattern"}
@@ -21,6 +22,8 @@ SURFACES = {"Floor", "Wall", "Both"}
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    CATALOG_DIR.mkdir(parents=True, exist_ok=True)
+    Base.metadata.create_all(bind=engine)
     yield
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,6 +77,7 @@ async def create_tile_design(
     family: str = Form(...),
     finish: str = Form("Matt"),
     surface: str = Form("Both"),
+    size: str = Form("2' × 2' (600 × 600 mm)"),
     image: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -88,6 +92,7 @@ async def create_tile_design(
     payload = await image.read()
     if not payload or len(payload) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Image must be between 1 byte and 5 MB.")
+    normalized_size = "2' × 4' (600 × 1200 mm)" if ("2x4" in size or "1200" in size or "4" in size) else "2' × 2' (600 × 600 mm)"
     existing = db.get(TileDesign, code)
     if existing:
         if existing.built_in:
@@ -97,6 +102,7 @@ async def create_tile_design(
         existing.family = family
         existing.finish = finish.strip() or "Matt"
         existing.surface = surface
+        existing.size = normalized_size
         existing.image_path = f"/api/tile-designs/{code}/image"
         existing.image_data = payload
         existing.image_content_type = image.content_type
@@ -105,7 +111,7 @@ async def create_tile_design(
         if legacy_image:
             legacy_image.unlink(missing_ok=True)
         return serialize(existing, request)
-    design = TileDesign(code=code,name=name.strip(),family=family,finish=finish.strip() or "Matt",surface=surface,image_path=f"/api/tile-designs/{code}/image",image_data=payload,image_content_type=image.content_type,color="#d8d4cb",vein="#7e786f",size="Custom size",texture_repeat=2.5,sort_order=1000,built_in=False)
+    design = TileDesign(code=code,name=name.strip(),family=family,finish=finish.strip() or "Matt",surface=surface,image_path=f"/api/tile-designs/{code}/image",image_data=payload,image_content_type=image.content_type,color="#d8d4cb",vein="#7e786f",size=normalized_size,texture_repeat=2.5,sort_order=1000,built_in=False)
     db.add(design)
     try:
         db.commit()
@@ -127,3 +133,21 @@ def delete_tile_design(code: str, db: Session = Depends(get_db)):
     db.commit()
     if image:
         image.unlink(missing_ok=True)
+
+@app.post("/api/inquiries", response_model=InquiryOut, status_code=status.HTTP_201_CREATED)
+def create_inquiry(inquiry_in: InquiryIn, db: Session = Depends(get_db)):
+    inquiry = Inquiry(
+        name=inquiry_in.name,
+        contact=inquiry_in.contact,
+        message=inquiry_in.message
+    )
+    db.add(inquiry)
+    db.commit()
+    db.refresh(inquiry)
+    return inquiry
+
+@app.get("/api/inquiries", response_model=list[InquiryOut])
+def list_inquiries(db: Session = Depends(get_db)):
+    inquiries = db.scalars(select(Inquiry).order_by(Inquiry.created_at.desc())).all()
+    return inquiries
+

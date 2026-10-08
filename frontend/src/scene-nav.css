@@ -12,7 +12,7 @@
   .live-viewer .title-block .subcopy{margin-top:10px;line-height:1.5}
   .live-viewer .enter-button{margin-top:12px;padding:12px 16px}
   .live-viewer .room-nav{bottom:18px}
-  .live-viewer .daylight-control{bottom:20px}
+  .live-viewer .viewer-lighting-controls{bottom:20px}
 }
 @media(max-width:800px){
   .live-viewer .room-nav{max-width:calc(100vw - 30px)}
