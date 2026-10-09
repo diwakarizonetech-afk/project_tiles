@@ -27,7 +27,8 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     const house=buildImportedHouse(renderer);const camera=new THREE.PerspectiveCamera(60,1,.07,140);const rig=new THREE.Group();rig.add(camera);house.scene.add(rig);camera.rotation.order='YXZ'
     const stereoCamera=new THREE.StereoCamera();stereoCamera.eyeSep=.064
     const keys=new Set<string>();let pitch=-.14,last=0,uiTime=0,previousRoom=-1,disposed=false,width=1,height=1,kitchenSpawnApplied=false;let dragging=false,oldX=0,oldY=0
-    const goTo=(i:number)=>{const kitchen=i===3?house.getKitchenStart():null,p=kitchen??viewpoints[i];rig.position.set(p.x,kitchen?house.getKitchenFloorHeight():0,p.z);rig.rotation.y=kitchen?.yaw??p.yaw;pitch=kitchen?0:viewpoints[i].pitch;if(kitchen)kitchenSpawnApplied=true;if(!renderer.xr.isPresenting){camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0)}live.current.onRoom(i)}
+    let bathroomSpawnApplied=false
+    const goTo=(i:number)=>{if(i===4)void house.loadRoom(4);const kitchen=i===3?house.getKitchenStart():null,bathroom=i===4?house.getBathroomStart():null,p=kitchen??bathroom??viewpoints[i],floorY=kitchen?house.getKitchenFloorHeight():bathroom?house.getBathroomFloorHeight():0;rig.position.set(p.x,floorY,p.z);rig.rotation.y=p.yaw;pitch=kitchen||bathroom?0:viewpoints[i].pitch;if(kitchen)kitchenSpawnApplied=true;if(bathroom&&!bathroomSpawnApplied){for(let wall=16;wall<=20;wall++)house.setWallStyle(wall,live.current.wallStyles[wall]);const floorTile=live.current.selected[4];if(floorTile)house.applyTile(4,floorTile);bathroomSpawnApplied=true}if(!renderer.xr.isPresenting){camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0)}live.current.onRoom(i)}
     goTo(live.current.initialRoom ?? 2)
     live.current.selected.forEach((tile,i)=>house.applyTile(i,tile))
     live.current.wallStyles.forEach((style,i)=>house.setWallStyle(i,style))
@@ -53,7 +54,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
         surfaceRay.setFromCamera(new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-((event.clientY-rect.top)/rect.height*2-1)),camera)
         const hit=house.pickSurface(surfaceRay)
         if(hit?.kind==='backsplash'){
-          setHoverHint('✨ Click to customize the kitchen backsplash')
+          setHoverHint(hit.id===20?'Click to customize the bathroom shower wall':'Click to customize the kitchen backsplash')
           renderer.domElement.style.cursor='pointer'
         } else if(hit?.kind==='wall'){
           const r=Math.floor(hit.id/4),s=hit.id%4
@@ -105,6 +106,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     renderer.setAnimationLoop((time)=>{
       if(disposed||renderer.getContext().isContextLost()||document.hidden)return;const dt=Math.min((time-last)/1000,.033);last=time;renderer.toneMappingExposure=live.current.brightness
       if(!kitchenSpawnApplied&&roomAt(rig.position.x,rig.position.z)===3&&house.getKitchenStart())goTo(3)
+      if(!bathroomSpawnApplied&&roomAt(rig.position.x,rig.position.z)===4&&house.getBathroomStart())goTo(4)
       if(live.current.walking&&!document.querySelector('[role="dialog"]'))move((keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0)+movement.current.x,(keys.has('KeyS')||keys.has('ArrowDown')?1:0)-(keys.has('KeyW')||keys.has('ArrowUp')?1:0)+movement.current.z,dt)
       if(renderer.xr.isPresenting){const session=renderer.xr.getSession();let turning=0;for(const source of session?.inputSources??[]){const axes=source.gamepad?.axes;if(axes&&axes.length>=4){if(source.handedness==='left')move(axes[2],axes[3],dt);else turning=axes[2]}}if(Math.abs(turning)>.7&&snapReady){rig.rotation.y-=Math.sign(turning)*Math.PI/6;snapReady=false}if(Math.abs(turning)<.3)snapReady=true;const hit=floorHit(controllers[0])??floorHit(controllers[1]);teleport.visible=!!hit;if(hit)teleport.position.set(hit.x,hit.y+.02,hit.z)}
       const current=roomAt(rig.position.x,rig.position.z);if(current!==previousRoom){live.current.onRoom(current);previousRoom=current}if(time-uiTime>140){setPosition({x:rig.position.x,z:rig.position.z,yaw:rig.rotation.y});uiTime=time}

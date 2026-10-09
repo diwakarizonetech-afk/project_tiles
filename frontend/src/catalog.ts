@@ -14,5 +14,5 @@ export function isSlab2x4(size: string | undefined): boolean {
 export type Tile={id:string;name:string;family:Family;color:string;vein:string;finish:string;size:string;image:string;normal?:string;roughness?:string;repeat:number;surface:SurfaceUse;builtIn:boolean;sortOrder:number}
 
 export const families:Family[]=['Marble','Stone','Terrazzo','Wood','Pattern']
-export const roomNames=['Cozy living room','Modern bedroom','VR gallery','Cooking Club']
+export const roomNames=['Cozy Living Room','Modern Bedroom','VR Gallery','Cooking Club','Modern Bathroom']
 export const sampleUrl=(tile:Tile)=>tile.image
