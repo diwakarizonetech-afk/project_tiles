@@ -94,7 +94,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       transmission:.9,thickness:.006,attenuationColor:'#eaf5f6',attenuationDistance:6,
       clearcoat:.18,clearcoatRoughness:.12,specularIntensity:.85,
       envMapIntensity:1.1,side:THREE.DoubleSide,
-      transparent:false,opacity:1,depthTest:true,depthWrite:true,
+      transparent:true,opacity:.25,depthWrite:false,depthTest:true,
     })
     screen.material=glass
     previous.forEach(material=>{for(const value of Object.values(material))if(value instanceof THREE.Texture)textures.add(value);material.dispose()})
@@ -1181,9 +1181,22 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
             if(Math.abs(normal.y)>.78&&center.y<authoredFloorY+.2){kind='floor';measuredFloor=Math.max(measuredFloor,center.y)}
             else if(Math.abs(normal.y)<.22&&center.y>authoredFloorY+.2){
               axis=Math.abs(normal.x)>Math.abs(normal.z)?'x-wall':'z-wall'
-              // The measured shower occupies the north end and west side.
-              kind=(axis==='x-wall'?center.x < -1.25&&center.z-centres[index]>1.85:center.z-centres[index]>2.1)?'backsplash':'wall'
-              wall=kind==='backsplash'?20:axis==='x-wall'?(normal.x<0?16:17):(normal.z<0?18:19)
+              const relZ = center.z - centres[index]
+              if (axis === 'x-wall') {
+                kind = (center.x < -1.25 && relZ > 1.85) ? 'backsplash' : 'wall'
+                wall = kind === 'backsplash' ? 20 : (center.x < 0 ? 16 : 17)
+              } else {
+                if (relZ < 0) {
+                  kind = 'wall'
+                  wall = 18 // South wall
+                } else if (relZ > 2.1) {
+                  kind = 'backsplash'
+                  wall = 20 // Shower wall
+                } else {
+                  kind = 'wall'
+                  wall = 19 // North wall
+                }
+              }
             }
             if(!kind){remaining.push(ia,ib,ic);continue}
             const key=`${kind}:${wall}`,bucket=buckets.get(key)??{indices:[],kind,wall,axis};bucket.indices.push(ia,ib,ic);buckets.set(key,bucket)
@@ -1191,18 +1204,149 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
           if(buckets.size){
             const rest=original.clone();rest.setIndex(remaining);rest.clearGroups();source.geometry=rest;geometries.add(rest)
             const bathroomFloors:THREE.Mesh[]=[]
+
+            // Triangle clipping for 4 horizontal wall layers (top to bottom)
+            type ClipVertex = { posWorld: THREE.Vector3; uv: THREE.Vector2; posLocal: THREE.Vector3 }
+            const clipPolyY = (verts: ClipVertex[], yVal: number, keepAbove: boolean): ClipVertex[] => {
+              const res: ClipVertex[] = []
+              for (let i = 0; i < verts.length; i++) {
+                const vA = verts[i], vB = verts[(i + 1) % verts.length]
+                const inA = keepAbove ? vA.posWorld.y >= yVal : vA.posWorld.y <= yVal
+                const inB = keepAbove ? vB.posWorld.y >= yVal : vB.posWorld.y <= yVal
+                if (inA) res.push(vA)
+                if (inA !== inB) {
+                  const dy = vB.posWorld.y - vA.posWorld.y
+                  const t = Math.abs(dy) < 1e-7 ? 0 : (yVal - vA.posWorld.y) / dy
+                  const posWorld = vA.posWorld.clone().lerp(vB.posWorld, t)
+                  posWorld.y = yVal
+                  const uv = vA.uv.clone().lerp(vB.uv, t)
+                  const posLocal = vA.posLocal.clone().lerp(vB.posLocal, t)
+                  res.push({ posWorld, uv, posLocal })
+                }
+              }
+              return res
+            }
+
             for(const bucket of buckets.values()){
-              const geometry=original.clone();geometry.setIndex(bucket.indices);geometry.clearGroups()
-              const uv=new Float32Array(position.count*2),point=new THREE.Vector3()
-              for(let vertex=0;vertex<position.count;vertex++){point.fromBufferAttribute(position,vertex).applyMatrix4(source.matrixWorld);const coords=project(point,bucket.axis);uv[vertex*2]=coords[0];uv[vertex*2+1]=coords[1]}
-              geometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));geometry.computeVertexNormals();geometries.add(geometry)
-              const material=bucket.kind==='floor'?floorMaterial:(wallMaterials[bucket.wall]??=new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.84,side:THREE.DoubleSide}))
-              materials.add(material)
-              const surface=new THREE.Mesh(geometry,material);surface.name=`Modern Bathroom ${bucket.kind} ${bucket.wall}`;surface.position.copy(source.position);surface.quaternion.copy(source.quaternion);surface.scale.copy(source.scale)
-              surface.userData.surfaceType=bucket.kind;surface.userData.repeat=1;surface.userData.physicalUV=true;surface.userData.bathroomMetricUV=true;surface.userData.floorRoom=index;surface.userData.floor=bucket.kind==='floor';surface.userData.wallId=bucket.wall;surface.castShadow=false;surface.receiveShadow=true;source.parent?.add(surface)
-              const mapped=bathroomSurfaceMap.get(bucket.wall)??[];mapped.push(surface);bathroomSurfaceMap.set(bucket.wall,mapped)
-              if(bucket.kind==='floor')bathroomFloors.push(surface)
-              else{wallMeshes.push(surface);wallMaterials[bucket.wall]=material;if(bucket.kind==='backsplash')cookingSurfaces.backsplash.push(surface)}
+              if(bucket.kind==='floor'){
+                const geometry=original.clone();geometry.setIndex(bucket.indices);geometry.clearGroups()
+                const uv=new Float32Array(position.count*2),point=new THREE.Vector3()
+                for(let vertex=0;vertex<position.count;vertex++){point.fromBufferAttribute(position,vertex).applyMatrix4(source.matrixWorld);const coords=project(point,bucket.axis);uv[vertex*2]=coords[0];uv[vertex*2+1]=coords[1]}
+                geometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));geometry.computeVertexNormals();geometries.add(geometry)
+                const material=floorMaterial;materials.add(material)
+                const surface=new THREE.Mesh(geometry,material);surface.name=`Modern Bathroom floor ${bucket.wall}`;surface.position.copy(source.position);surface.quaternion.copy(source.quaternion);surface.scale.copy(source.scale)
+                surface.userData.surfaceType='floor';surface.userData.repeat=1;surface.userData.physicalUV=true;surface.userData.bathroomMetricUV=true;surface.userData.floorRoom=index;surface.userData.floor=true;surface.userData.wallId=bucket.wall;surface.castShadow=false;surface.receiveShadow=true;source.parent?.add(surface)
+                bathroomFloors.push(surface)
+                continue
+              }
+
+              // Split wall bucket into 4 vertical layers (Top to Bottom: layers 0..3)
+              let yMin = Infinity, yMax = -Infinity
+              for(let idx=0; idx<bucket.indices.length; idx++){
+                const vIdx = bucket.indices[idx]
+                const pW = new THREE.Vector3().fromBufferAttribute(position, vIdx).applyMatrix4(source.matrixWorld)
+                if (pW.y < yMin) yMin = pW.y
+                if (pW.y > yMax) yMax = pW.y
+              }
+
+              const H = yMax - yMin
+              const baseWall = bucket.wall
+
+              for(let layerIdx = 0; layerIdx < 4; layerIdx++) {
+                const layerWallId = baseWall * 10 + layerIdx
+                const yHigh = layerIdx === 0 ? yMax + 0.01 : yMin + (4 - layerIdx) * H / 4
+                const yLow = layerIdx === 3 ? yMin - 0.01 : yMin + (3 - layerIdx) * H / 4
+
+                const layerPositions: number[] = []
+                const layerUvs: number[] = []
+                const layerIndices: number[] = []
+                let vertexCounter = 0
+
+                for(let offset = 0; offset < bucket.indices.length; offset += 3) {
+                  const ia = bucket.indices[offset], ib = bucket.indices[offset+1], ic = bucket.indices[offset+2]
+                  const pLocA = new THREE.Vector3().fromBufferAttribute(position, ia)
+                  const pLocB = new THREE.Vector3().fromBufferAttribute(position, ib)
+                  const pLocC = new THREE.Vector3().fromBufferAttribute(position, ic)
+                  const pWorldA = pLocA.clone().applyMatrix4(source.matrixWorld)
+                  const pWorldB = pLocB.clone().applyMatrix4(source.matrixWorld)
+                  const pWorldC = pLocC.clone().applyMatrix4(source.matrixWorld)
+
+                  const uvA = new THREE.Vector2(...project(pWorldA, bucket.axis))
+                  const uvB = new THREE.Vector2(...project(pWorldB, bucket.axis))
+                  const uvC = new THREE.Vector2(...project(pWorldC, bucket.axis))
+
+                  const vA: ClipVertex = { posWorld: pWorldA, uv: uvA, posLocal: pLocA }
+                  const vB: ClipVertex = { posWorld: pWorldB, uv: uvB, posLocal: pLocB }
+                  const vC: ClipVertex = { posWorld: pWorldC, uv: uvC, posLocal: pLocC }
+
+                  const polyAbove = clipPolyY([vA, vB, vC], yLow, true)
+                  if (polyAbove.length < 3) continue
+                  const polyLayer = clipPolyY(polyAbove, yHigh, false)
+                  if (polyLayer.length < 3) continue
+
+                  for (let i = 1; i < polyLayer.length - 1; i++) {
+                    const tri = [polyLayer[0], polyLayer[i], polyLayer[i + 1]]
+                    for (const vert of tri) {
+                      layerPositions.push(vert.posLocal.x, vert.posLocal.y, vert.posLocal.z)
+                      layerUvs.push(vert.uv.x, vert.uv.y)
+                      layerIndices.push(vertexCounter++)
+                    }
+                  }
+                }
+
+                if (layerPositions.length === 0) continue
+
+                const geometry = new THREE.BufferGeometry()
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(layerPositions, 3))
+                geometry.setAttribute('uv', new THREE.Float32BufferAttribute(layerUvs, 2))
+                geometry.setIndex(layerIndices)
+                geometry.computeVertexNormals()
+                geometries.add(geometry)
+
+                const material = (wallMaterials[layerWallId] ??= new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: .84, side: THREE.DoubleSide }))
+                materials.add(material)
+
+                const surface = new THREE.Mesh(geometry, material)
+                surface.name = `Modern Bathroom wall ${baseWall} layer ${layerIdx}`
+                surface.position.copy(source.position)
+                surface.quaternion.copy(source.quaternion)
+                surface.scale.copy(source.scale)
+                surface.userData.surfaceType = bucket.kind
+                surface.userData.repeat = 1
+                surface.userData.physicalUV = true
+                surface.userData.bathroomMetricUV = true
+                surface.userData.floorRoom = index
+                surface.userData.floor = false
+                surface.userData.wallId = layerWallId
+                surface.userData.baseWall = baseWall
+                surface.userData.layer = layerIdx
+                surface.castShadow = false
+                surface.receiveShadow = true
+                source.parent?.add(surface)
+
+                wallMeshes.push(surface)
+                if (bucket.kind === 'backsplash') cookingSurfaces.backsplash.push(surface)
+
+                const layerList = bathroomSurfaceMap.get(layerWallId) ?? []
+                layerList.push(surface)
+                bathroomSurfaceMap.set(layerWallId, layerList)
+
+                const baseList = bathroomSurfaceMap.get(baseWall) ?? []
+                baseList.push(surface)
+                bathroomSurfaceMap.set(baseWall, baseList)
+
+                if (baseWall === 19 || baseWall === 20) {
+                  const altBaseWall = baseWall === 19 ? 20 : 19
+                  const altLayerWallId = altBaseWall * 10 + layerIdx
+                  const altLayerList = bathroomSurfaceMap.get(altLayerWallId) ?? []
+                  altLayerList.push(surface)
+                  bathroomSurfaceMap.set(altLayerWallId, altLayerList)
+
+                  const altBaseList = bathroomSurfaceMap.get(altBaseWall) ?? []
+                  altBaseList.push(surface)
+                  bathroomSurfaceMap.set(altBaseWall, altBaseList)
+                }
+              }
             }
             if(bathroomFloors.length){targets=bathroomFloors;floorTargets[index]=bathroomFloors}
           }
@@ -1368,33 +1512,80 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     }).catch(error=>console.error(`Could not load tile ${tile.id}`,error))
   }
   function setWallStyle(wall:number,style:WallStyle){
-    const material=wallMaterials[wall],mesh=bathroomSurfaceMap.get(wall)?.[0]??wallMeshes.find(item=>item.userData.wallId===wall&&item.userData.surfaceType==='wall')??wallMeshes.find(item=>item.userData.wallId===wall)
-    // Note: we intentionally do NOT skip invisible meshes — the material update
-    // must happen so that the style is live the moment the wall becomes visible.
-    if(!material||!mesh||!/^#[\da-fA-F]{6}$/.test(style.color))return
-    const request=++wallLoads[wall]
-    wallMaps[wall]?.dispose();wallMaps[wall]=undefined;wallDetailMaps[wall].forEach(map=>map.dispose());wallDetailMaps[wall]=[]
-    material.map=null;material.bumpMap=null;material.normalMap=null;material.roughnessMap=null;material.color.set(style.color);material.roughness=.84;material.opacity=1;material.transparent=false;material.depthWrite=true;material.needsUpdate=true
+    if(!style||!/^#[\da-fA-F]{6}$/.test(style.color))return
 
-    if(!style.image&&style.design!=='paint'){
-      const texture=makeWallPattern(style,mesh.userData.repeat);wallMaps[wall]=texture
-      material.map=texture;material.bumpMap=texture;material.bumpScale=.005;material.roughness=.72;material.needsUpdate=true;return
+    const applyToSingle = (wId: number, mesh: THREE.Mesh) => {
+      const material = wallMaterials[wId] ??= new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: .84, side: THREE.DoubleSide })
+      mesh.material = material
+      const request = (wallLoads[wId] = (wallLoads[wId] ?? 0) + 1)
+
+      wallMaps[wId]?.dispose(); wallMaps[wId] = undefined
+      ;(wallDetailMaps[wId] ?? []).forEach(map => map.dispose()); wallDetailMaps[wId] = []
+
+      material.map = null; material.bumpMap = null; material.normalMap = null; material.roughnessMap = null
+      material.color.set(style.color); material.roughness = .84; material.opacity = 1; material.transparent = false; material.depthWrite = true; material.needsUpdate = true
+
+      if (!style.image && style.design !== 'paint') {
+        const texture = makeWallPattern(style, mesh.userData.repeat)
+        wallMaps[wId] = texture
+        material.map = texture; material.bumpMap = texture; material.bumpScale = .005; material.roughness = .72; material.needsUpdate = true; return
+      }
+      if (!style.image) {
+        const bump = makeWallPattern(style, mesh.userData.repeat)
+        wallMaps[wId] = bump
+        material.bumpMap = bump; material.bumpScale = .003; material.roughness = .86; material.needsUpdate = true; return
+      }
+
+      const tileDimensions = style.size?.match(/(\d{2,4})\s*[x×]\s*(\d{2,4})/i)
+      const tileWidth = tileDimensions ? Number(tileDimensions[1]) / 1000 : .6
+      const tileHeight = tileDimensions ? Number(tileDimensions[2]) / 1000 : .6
+      const repeatX = mesh.userData.bathroomMetricUV ? 1 / tileWidth : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
+      const repeatY = mesh.userData.bathroomMetricUV ? 1 / tileHeight : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
+
+      void Promise.all([
+        loadTexture(style.image, repeatX, repeatY, true),
+        style.normal ? loadTexture(style.normal, repeatX, repeatY) : Promise.resolve(null),
+        style.roughness ? loadTexture(style.roughness, repeatX, repeatY) : Promise.resolve(null)
+      ]).then(([texture, normal, roughness]) => {
+        if (disposed || request !== wallLoads[wId]) {
+          texture.dispose(); normal?.dispose(); roughness?.dispose(); return
+        }
+        wallMaps[wId]?.dispose()
+        ;(wallDetailMaps[wId] ?? []).forEach(map => map.dispose())
+        wallMaps[wId] = texture
+        wallDetailMaps[wId] = [...(normal ? [normal] : []), ...(roughness ? [roughness] : [])]
+        for (const map of [texture, normal, roughness]) if (map) {
+          map.wrapS = map.wrapT = THREE.RepeatWrapping
+          map.repeat.set(repeatX, repeatY)
+          map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy())
+        }
+        texture.colorSpace = THREE.SRGBColorSpace
+        material.color.set('#ffffff')
+        material.map = texture
+        material.bumpMap = normal ? null : texture
+        material.bumpScale = .006
+        material.normalMap = normal
+        material.roughnessMap = roughness
+        material.roughness = .62
+        material.opacity = 1
+        material.transparent = false
+        material.depthWrite = true
+        material.needsUpdate = true
+        if (normal) material.normalScale.set(.5, .5)
+      }).catch(error => console.error(`Could not load wall tile for wall ${wId}`, error))
     }
-    if(!style.image){
-      const bump=makeWallPattern(style,mesh.userData.repeat);wallMaps[wall]=bump
-      material.bumpMap=bump;material.bumpScale=.003;material.roughness=.86;material.needsUpdate=true;return
+
+    const targetMeshes = bathroomSurfaceMap.get(wall) ?? wallMeshes.filter(item => item.userData.wallId === wall)
+
+    if (targetMeshes.length > 0) {
+      targetMeshes.forEach(mesh => {
+        const wId = typeof mesh.userData.wallId === 'number' ? mesh.userData.wallId : wall
+        applyToSingle(wId, mesh)
+      })
+    } else {
+      const mesh = wallMeshes.find(item => item.userData.wallId === wall)
+      if (mesh) applyToSingle(wall, mesh)
     }
-    const tileDimensions=style.size?.match(/(\d{2,4})\s*[x×]\s*(\d{2,4})/i),tileWidth=tileDimensions?Number(tileDimensions[1])/1000:.6,tileHeight=tileDimensions?Number(tileDimensions[2])/1000:.6
-    const repeatX=mesh.userData.bathroomMetricUV?1/tileWidth:mesh.userData.physicalUV?1:(style.repeat??mesh.userData.repeat),repeatY=mesh.userData.bathroomMetricUV?1/tileHeight:mesh.userData.physicalUV?1:(style.repeat??mesh.userData.repeat)
-    void Promise.all([loadTexture(style.image,repeatX,repeatY,true),style.normal?loadTexture(style.normal,repeatX,repeatY):Promise.resolve(null),style.roughness?loadTexture(style.roughness,repeatX,repeatY):Promise.resolve(null)]).then(([texture,normal,roughness])=>{
-      if(disposed||request!==wallLoads[wall]){texture.dispose();normal?.dispose();roughness?.dispose();return}
-      wallMaps[wall]?.dispose();wallDetailMaps[wall].forEach(map=>map.dispose())
-      wallMaps[wall]=texture;wallDetailMaps[wall]=[...(normal?[normal]:[]),...(roughness?[roughness]:[])]
-      for(const map of [texture,normal,roughness])if(map){map.wrapS=map.wrapT=THREE.RepeatWrapping;map.repeat.set(repeatX,repeatY);map.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy())}
-      texture.colorSpace=THREE.SRGBColorSpace
-      material.color.set('#ffffff');material.map=texture;material.bumpMap=normal?null:texture;material.bumpScale=.006;material.normalMap=normal;material.roughnessMap=roughness;material.roughness=.62;material.opacity=1;material.transparent=false;material.depthWrite=true;material.needsUpdate=true
-      if(normal)material.normalScale.set(.5,.5)
-    }).catch(error=>console.error(`Could not load wall tile for wall ${wall}`,error))
   }
   function pickSurface(raycaster:THREE.Raycaster){
     const floors=floorTargets.flat().concat(floorMeshes.filter(mesh=>mesh.visible))

@@ -91,3 +91,46 @@ dummy
   background:#e5f0eb;
   border-color:#1e4f45;
 }
+
+/* 4-Layer Vertical Split Selector for Bathroom Walls */
+.layer-selector-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 7px 0 10px;
+  padding: 5px 7px;
+  background: #eae4d7;
+  border: 1px solid #d4ccbd;
+  border-radius: 3px;
+}
+.layer-bar-title {
+  font: 700 7.5px 'DM Mono', monospace;
+  letter-spacing: .5px;
+  color: #556758;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+.layer-btn {
+  flex: 1;
+  padding: 5px 4px;
+  background: #f7f3ea;
+  border: 1px solid #c9c1b2;
+  color: #384a3c;
+  font: 700 8px 'DM Mono', monospace;
+  letter-spacing: .2px;
+  border-radius: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+  transition: all .15s;
+}
+.layer-btn:hover {
+  background: #fff;
+  border-color: #1e4f45;
+}
+.layer-btn.active {
+  background: linear-gradient(135deg, #0f4f46, #18665b);
+  color: #fff;
+  border-color: #0f4f46;
+  box-shadow: 0 2px 6px rgba(15,79,70,.25);
+}

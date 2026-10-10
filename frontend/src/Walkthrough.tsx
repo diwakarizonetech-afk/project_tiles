@@ -7,7 +7,7 @@ import { buildImportedHouse, importedRoomAt as roomAt, importedViewpoints as vie
 import { roomNames, sampleUrl, type Tile } from './catalog'
 
 export type ViewHandle = { enter:()=>void; goTo:(room:number)=>void; reset:()=>void; enterVR:()=>Promise<void>; fullscreen:()=>void }
-type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:WallStyle[]; walking:boolean; stereo:boolean; gyro:boolean; brightness:number; floorGlare:number; initialRoom?:number; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onFloorPick:(room:number)=>void; onWalking:(active:boolean)=>void; onGyro:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
+type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:Record<number, WallStyle> | WallStyle[]; walking:boolean; stereo:boolean; gyro:boolean; brightness:number; floorGlare:number; initialRoom?:number; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onFloorPick:(room:number)=>void; onWalking:(active:boolean)=>void; onGyro:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
 type Runtime = { goTo:(room:number)=>void; reset:()=>void; enter:()=>void; vr:()=>Promise<void>; apply:(room:number,tile:Tile)=>void; styleWall:(wall:number,style:WallStyle)=>void; setFloorReflection:(f:number)=>void; renderer:THREE.WebGLRenderer }
 
 export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props,ref){
@@ -20,18 +20,45 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
   }),[])
   useEffect(()=>{
     setError('');const element=host.current!;let renderer:THREE.WebGLRenderer
-    try {renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'})}catch {setError('This browser could not start 3D. Enable hardware acceleration or open this page in a WebGL-capable browser.');return}
+    try {
+      renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'})
+    } catch {
+      try {
+        renderer=new THREE.WebGLRenderer({antialias:true})
+      } catch {
+        try {
+          renderer=new THREE.WebGLRenderer({antialias:false})
+        } catch {
+          try {
+            renderer=new THREE.WebGLRenderer()
+          } catch(err) {
+            console.error('WebGLRenderer instantiation failed:', err)
+            setError('This browser could not start 3D. Enable hardware acceleration or open this page in a WebGL-capable browser.')
+            return
+          }
+        }
+      }
+    }
     // High-fidelity pixel ratio with PCFSoftShadowMap for realistic soft shadows and crisp textures.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.75));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.06;renderer.xr.enabled=true
     element.appendChild(renderer.domElement);renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Interactive 3D house. Drag to look. Enter walkthrough, then use W A S D or the arrow keys to move.');renderer.domElement.setAttribute('role','application')
-    const house=buildImportedHouse(renderer);const camera=new THREE.PerspectiveCamera(60,1,.07,140);const rig=new THREE.Group();rig.add(camera);house.scene.add(rig);camera.rotation.order='YXZ'
+    let house: ReturnType<typeof buildImportedHouse>
+    try {
+      house=buildImportedHouse(renderer)
+    } catch(err) {
+      console.error('3D scene construction failed:', err)
+      setError('3D graphics could not be initialized. Click below to try again.')
+      try { renderer.dispose(); element.replaceChildren() } catch {}
+      return
+    }
+    const camera=new THREE.PerspectiveCamera(60,1,.07,140);const rig=new THREE.Group();rig.add(camera);house.scene.add(rig);camera.rotation.order='YXZ'
     const stereoCamera=new THREE.StereoCamera();stereoCamera.eyeSep=.064
     const keys=new Set<string>();let pitch=-.14,last=0,uiTime=0,previousRoom=-1,disposed=false,width=1,height=1,kitchenSpawnApplied=false;let dragging=false,oldX=0,oldY=0
     let bathroomSpawnApplied=false
-    const goTo=(i:number)=>{if(i===4)void house.loadRoom(4);const kitchen=i===3?house.getKitchenStart():null,bathroom=i===4?house.getBathroomStart():null,p=kitchen??bathroom??viewpoints[i],floorY=kitchen?house.getKitchenFloorHeight():bathroom?house.getBathroomFloorHeight():0;rig.position.set(p.x,floorY,p.z);rig.rotation.y=p.yaw;pitch=kitchen||bathroom?0:viewpoints[i].pitch;if(kitchen)kitchenSpawnApplied=true;if(bathroom&&!bathroomSpawnApplied){for(let wall=16;wall<=20;wall++)house.setWallStyle(wall,live.current.wallStyles[wall]);const floorTile=live.current.selected[4];if(floorTile)house.applyTile(4,floorTile);bathroomSpawnApplied=true}if(!renderer.xr.isPresenting){camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0)}live.current.onRoom(i)}
+    const goTo=(i:number)=>{if(i===4)void house.loadRoom(4);const kitchen=i===3?house.getKitchenStart():null,bathroom=i===4?house.getBathroomStart():null,p=kitchen??bathroom??viewpoints[i],floorY=kitchen?house.getKitchenFloorHeight():bathroom?house.getBathroomFloorHeight():0;rig.position.set(p.x,floorY,p.z);rig.rotation.y=p.yaw;pitch=kitchen||bathroom?0:viewpoints[i].pitch;if(kitchen)kitchenSpawnApplied=true;if(bathroom&&!bathroomSpawnApplied){Object.entries(live.current.wallStyles).forEach(([w,s])=>house.setWallStyle(Number(w),s));const floorTile=live.current.selected[4];if(floorTile)house.applyTile(4,floorTile);bathroomSpawnApplied=true}if(!renderer.xr.isPresenting){camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0)}live.current.onRoom(i)}
     goTo(live.current.initialRoom ?? 2)
     live.current.selected.forEach((tile,i)=>house.applyTile(i,tile))
-    live.current.wallStyles.forEach((style,i)=>house.setWallStyle(i,style))
+    Object.entries(live.current.wallStyles).forEach(([w,style])=>house.setWallStyle(Number(w),style))
     function resize(){width=element.clientWidth;height=element.clientHeight;renderer.setSize(width,height);camera.aspect=width/height;camera.updateProjectionMatrix()}
     const observer=new ResizeObserver(resize);observer.observe(element);resize()
     function clear(){keys.clear();movement.current={x:0,z:0};dragging=false}
@@ -53,8 +80,14 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
         const rect=renderer.domElement.getBoundingClientRect()
         surfaceRay.setFromCamera(new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-((event.clientY-rect.top)/rect.height*2-1)),camera)
         const hit=house.pickSurface(surfaceRay)
-        if(hit?.kind==='backsplash'){
-          setHoverHint(hit.id===20?'Click to customize the bathroom shower wall':'Click to customize the kitchen backsplash')
+        if((hit?.kind==='wall'||hit?.kind==='backsplash')&&typeof hit?.id==='number'&&hit.id>=160&&hit.id<=203){
+          const baseWall=Math.floor(hit.id/10), layer=hit.id%10
+          const baseLabel=(baseWall===19||baseWall===20)?'North / Shower wall':['West wall','East wall','South wall','North wall'][baseWall%4]
+          const layerLabels=['Top layer','Upper-Mid layer','Lower-Mid layer','Bottom layer']
+          setHoverHint(`✨ Click to customise Modern Bathroom · ${baseLabel} (${layerLabels[layer]})`)
+          renderer.domElement.style.cursor='pointer'
+        } else if(hit?.kind==='backsplash'){
+          setHoverHint('Click to customize the kitchen backsplash')
           renderer.domElement.style.cursor='pointer'
         } else if(hit?.kind==='wall'){
           const r=Math.floor(hit.id/4),s=hit.id%4
@@ -116,7 +149,14 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     return()=>{disposed=true;runtime.current=null;renderer.setAnimationLoop(null);void renderer.xr.getSession()?.end();if(document.pointerLockElement===renderer.domElement)document.exitPointerLock();observer.disconnect();window.removeEventListener('keydown',keyDown);window.removeEventListener('keyup',keyUp);window.removeEventListener('blur',clear);document.removeEventListener('visibilitychange',clear);document.removeEventListener('pointerlockchange',lockChange);document.removeEventListener('mousemove',mouseMove);window.removeEventListener('deviceorientation',deviceOrientation);renderer.domElement.removeEventListener('webglcontextlost',contextLost);renderer.domElement.removeEventListener('webglcontextrestored',contextRestored);controllers.forEach((c,i)=>c.removeEventListener('select',selectCallbacks[i]));renderer.xr.removeEventListener('sessionstart',onStart);renderer.xr.removeEventListener('sessionend',onEnd);house.dispose();renderer.dispose();renderer.forceContextLoss();element.replaceChildren()}
   },[attempt])
   useEffect(()=>{if(lastApplied.current===props.selected)return;lastApplied.current=props.selected;props.selected.forEach((tile,i)=>runtime.current?.apply(i,tile))},[props.selected])
-  useEffect(()=>{props.wallStyles.forEach((style,i)=>runtime.current?.styleWall(i,style))},[props.wallStyles])
+  useEffect(()=>{
+    if(!props.wallStyles)return
+    if(Array.isArray(props.wallStyles)){
+      props.wallStyles.forEach((style,i)=>runtime.current?.styleWall(i,style))
+    }else{
+      Object.entries(props.wallStyles).forEach(([w,style])=>runtime.current?.styleWall(Number(w),style as WallStyle))
+    }
+  },[props.wallStyles])
   useEffect(()=>{if(!props.walking){movement.current={x:0,z:0};if(document.pointerLockElement)document.exitPointerLock()}},[props.walking])
   useEffect(()=>{if(!props.gyro)gyroSession.current=false},[props.gyro])
   useEffect(()=>{runtime.current?.setFloorReflection(props.floorGlare)},[props.floorGlare])
