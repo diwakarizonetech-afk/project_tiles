@@ -1,8 +1,62 @@
 import { useState, useEffect } from 'react';
-import { Trash2, Upload, LogIn, Grid, Settings, Home, LogOut, Mail, Phone, MessageSquare, Clock } from 'lucide-react';
+import { useMemo, useRef } from 'react';
+import { Trash2, Upload, LogIn, Grid, Settings, Home, LogOut, Mail, Phone, MessageSquare, Clock, ArrowLeft, RotateCcw, Expand, Footprints } from 'lucide-react';
 import { fetchTiles, deleteCustomTile, saveCustomTile, fetchInquiries } from './api';
-import { type Tile, families, TILE_SIZES, type Family, type SurfaceUse, type TileSize } from './catalog';
+import { type Tile, families, TILE_SIZES, roomNames, type Family, type SurfaceUse, type TileSize, type TileOrientation } from './catalog';
+import { Walkthrough, type ViewHandle } from './Walkthrough';
+import type { WallStyle } from './house';
 import './tailwind.css';
+
+const noop=()=>{};
+
+function AdminTilePreview({tile,tiles,onExit}:{tile:Tile;tiles:Tile[];onExit:()=>void}){
+  const view=useRef<ViewHandle>(null);
+  const supportsWall=tile.surface!=='Floor',supportsFloor=tile.surface!=='Wall';
+  const [surface,setSurface]=useState<'Wall'|'Floor'>(tile.surface==='Floor'?'Floor':'Wall');
+  const [walking,setWalking]=useState(false);
+  const [ready,setReady]=useState(false),[error,setError]=useState('');
+  const floorFallback=tiles.find(item=>item.surface==='Floor'||item.surface==='Both');
+  const selected=useMemo(()=>Array.from({length:roomNames.length},(_,room)=>room===4&&surface==='Floor'?tile:floorFallback??tile),[tile,surface,floorFallback]);
+  const wallStyles=useMemo<WallStyle[]>(()=>Array.from({length:roomNames.length*4+2},(_,index)=>index>=16&&index<=20&&surface==='Wall'?{
+    color:'#ffffff',design:'paint',image:tile.image,normal:tile.normal,roughness:tile.roughness,repeat:tile.repeat,size:tile.size,orientation:tile.orientation??'Landscape'
+  }:{color:'#f0ece6',design:'paint'}),[tile,surface]);
+  useEffect(()=>{view.current?.reset()},[surface]);
+  const onError=(message:string)=>setError(message);
+  const canPreview=surface==='Wall'?supportsWall:supportsFloor;
+  return <div className="space-y-5">
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex min-w-0 items-center gap-3"><button type="button" onClick={onExit} className="rounded-md border border-gray-300 bg-white p-2 text-gray-600 hover:bg-gray-50" aria-label="Exit tile preview"><ArrowLeft size={18}/></button><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Interactive showroom preview</p><h2 className="truncate text-xl font-semibold text-gray-900">{tile.name}</h2></div></div>
+      <button type="button" onClick={onExit} className="rounded-md bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800">Exit Preview</button>
+    </div>
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+      <div className="min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-gray-900 shadow-sm">
+        <div className="live-viewer is-walking" style={{position:'relative',height:'min(68vh,720px)',minHeight:380,overflow:'hidden'}}>
+          <Walkthrough ref={view} selected={selected} wallStyles={wallStyles} walking={walking} stereo={false} gyro={false} brightness={.95} floorGlare={.35} initialRoom={4} previewMode previewSurface={surface} onBrowse={noop} onRoom={noop} onWallPick={noop} onFloorPick={noop} onWalking={setWalking} onGyro={noop} onNotice={onError} onReady={()=>setReady(true)} onXR={noop}/>
+          <div className="absolute left-3 top-3 z-[8] flex flex-wrap gap-2 sm:left-4 sm:top-4">
+            <button type="button" onClick={onExit} className="flex items-center gap-2 rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow hover:bg-white">Exit Preview</button>
+            <button type="button" onClick={()=>view.current?.reset()} className="flex items-center gap-2 rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow hover:bg-white"><RotateCcw size={15}/> Reset view</button>
+            <button type="button" aria-pressed={walking} onClick={()=>{if(!walking)view.current?.enter();else setWalking(false)}} className="flex items-center gap-2 rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow hover:bg-white"><Footprints size={15}/> {walking?'Stop walking':'Walk'}</button>
+            <button type="button" onClick={()=>view.current?.fullscreen()} className="flex items-center gap-2 rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow hover:bg-white"><Expand size={15}/> Fullscreen</button>
+          </div>
+          {tile.surface==='Both'&&<label className="absolute right-3 top-3 z-[8] rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow sm:right-4 sm:top-4">Surface <select aria-label="Preview surface" value={surface} onChange={event=>setSurface(event.target.value as 'Wall'|'Floor')} className="ml-2 rounded border border-gray-300 bg-white px-2 py-1"><option value="Wall">Wall</option><option value="Floor">Floor</option></select></label>}
+          {!ready&&!error&&<div className="absolute inset-0 z-[7] flex items-center justify-center bg-gray-900/60 text-sm text-white">Loading the showroom…</div>}
+          {error&&<div role="alert" className="absolute inset-x-4 top-20 z-[9] rounded-md bg-red-50 p-3 text-sm text-red-800 shadow">{error} You can exit preview at any time.</div>}
+        </div>
+      </div>
+      <aside className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <h3 className="mb-4 text-base font-semibold text-gray-900">Tile details</h3>
+        <dl className="space-y-3 text-sm">
+          <div><dt className="text-xs font-medium uppercase tracking-wide text-gray-500">Product code</dt><dd className="mt-1 text-gray-900">{tile.id}</dd></div>
+          <div><dt className="text-xs font-medium uppercase tracking-wide text-gray-500">Target surface</dt><dd className="mt-1 text-gray-900">{tile.surface==='Both'?'Both Wall and Floor':tile.surface==='Wall'?'Wall Only':'Floor Only'}</dd></div>
+          <div><dt className="text-xs font-medium uppercase tracking-wide text-gray-500">Dimensions</dt><dd className="mt-1 text-gray-900">{tile.size}</dd></div>
+          {tile.surface==='Wall'&&<div><dt className="text-xs font-medium uppercase tracking-wide text-gray-500">Tile orientation</dt><dd className="mt-1 text-gray-900">{tile.orientation??'Landscape'}</dd></div>}
+        </dl>
+        {!canPreview&&<p role="alert" className="mt-4 text-sm text-red-700">This tile cannot be previewed on the selected surface.</p>}
+        <p className="mt-5 text-xs leading-5 text-gray-500">Preview changes are temporary. Exiting closes this showroom session and leaves catalog and public showroom settings untouched.</p>
+      </aside>
+    </div>
+  </div>;
+}
 
 export default function Admin() {
   const [email, setEmail] = useState('');
@@ -13,6 +67,7 @@ export default function Admin() {
   const [activeTab, setActiveTab] = useState<'catalog' | 'inquiries'>('catalog');
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState('');
+  const [previewTile,setPreviewTile]=useState<Tile|null>(null);
   
   // Upload State
   const [uploadImage, setUploadImage] = useState('');
@@ -21,6 +76,7 @@ export default function Admin() {
   const [uploadFamily, setUploadFamily] = useState<Family>('Pattern');
   const [uploadFinish, setUploadFinish] = useState('Matt');
   const [uploadSurface, setUploadSurface] = useState<SurfaceUse>('Both');
+  const [uploadOrientation,setUploadOrientation]=useState<TileOrientation>('Landscape');
   const [uploadSize, setUploadSize] = useState<TileSize>("2' × 2' (600 × 600 mm)");
 
   const loadData = async () => {
@@ -80,6 +136,7 @@ export default function Admin() {
         image: uploadImage,
         repeat: 2.5,
         surface: uploadSurface,
+        orientation: uploadSurface==='Wall'?uploadOrientation:'Landscape',
         builtIn: false,
         sortOrder: 1000
       };
@@ -88,6 +145,7 @@ export default function Admin() {
       setUploadImage('');
       setUploadName('');
       setUploadCode('');
+      setUploadOrientation('Landscape');
       loadData();
     } catch (err: any) {
       setNotice(err.message || 'Upload failed');
@@ -156,8 +214,8 @@ export default function Admin() {
               </h1>
             </div>
             <div className="flex items-center gap-4">
-              <button onClick={() => setActiveTab('catalog')} className={`text-sm font-medium px-3 py-1.5 rounded-md transition ${activeTab === 'catalog' ? 'bg-teal-50 text-teal-700' : 'text-gray-500 hover:bg-gray-50'}`}>Catalog</button>
-              <button onClick={() => setActiveTab('inquiries')} className={`text-sm font-medium px-3 py-1.5 rounded-md transition flex items-center gap-2 ${activeTab === 'inquiries' ? 'bg-teal-50 text-teal-700' : 'text-gray-500 hover:bg-gray-50'}`}>Inquiries {inquiries.length > 0 && <span className="bg-teal-600 text-white text-[10px] px-1.5 py-0.5 rounded-full">{inquiries.length}</span>}</button>
+              <button onClick={() => {setPreviewTile(null);setActiveTab('catalog')}} className={`text-sm font-medium px-3 py-1.5 rounded-md transition ${activeTab === 'catalog' ? 'bg-teal-50 text-teal-700' : 'text-gray-500 hover:bg-gray-50'}`}>Catalog</button>
+              <button onClick={() => {setPreviewTile(null);setActiveTab('inquiries')}} className={`text-sm font-medium px-3 py-1.5 rounded-md transition flex items-center gap-2 ${activeTab === 'inquiries' ? 'bg-teal-50 text-teal-700' : 'text-gray-500 hover:bg-gray-50'}`}>Inquiries {inquiries.length > 0 && <span className="bg-teal-600 text-white text-[10px] px-1.5 py-0.5 rounded-full">{inquiries.length}</span>}</button>
               <div className="w-px h-6 bg-gray-200 mx-1"></div>
               <a href="/" className="text-gray-500 hover:text-gray-900 transition flex items-center gap-1 text-sm font-medium">
                 <Home size={16} /> Showroom
@@ -177,7 +235,7 @@ export default function Admin() {
           </div>
         )}
 
-        {activeTab === 'catalog' ? (
+        {previewTile ? <AdminTilePreview key={previewTile.id} tile={previewTile} tiles={tiles} onExit={()=>setPreviewTile(null)}/> : activeTab === 'catalog' ? (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* UPLOAD PANEL (Left) */}
             <div className="lg:col-span-5 flex flex-col gap-6">
@@ -243,13 +301,18 @@ export default function Admin() {
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Target Surface</label>
-                      <select value={uploadSurface} onChange={e => setUploadSurface(e.target.value as SurfaceUse)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm bg-white">
+                      <select value={uploadSurface} onChange={e => {setUploadSurface(e.target.value as SurfaceUse);setUploadOrientation('Landscape')}} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm bg-white">
                         <option value="Both">Both (Floor & Wall)</option>
                         <option value="Floor">Floor Only</option>
                         <option value="Wall">Wall Only</option>
                       </select>
                     </div>
                   </div>
+
+                  {uploadSurface==='Wall'&&<div className="grid grid-cols-2 gap-4"><div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="upload-tile-orientation">Tile Orientation</label>
+                    <select id="upload-tile-orientation" value={uploadOrientation} onChange={e=>setUploadOrientation(e.target.value as TileOrientation)} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm"><option value="Landscape">Landscape</option><option value="Portrait">Portrait</option></select>
+                  </div></div>}
 
                   <div className="pt-2">
                     <button disabled={loading} type="submit" className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-teal-700 hover:bg-teal-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 transition disabled:opacity-50 disabled:cursor-not-allowed">
@@ -281,8 +344,8 @@ export default function Admin() {
                         <h3 className="text-sm font-bold tracking-wider text-gray-500 uppercase border-b border-gray-200 pb-2 mb-4">{surface} Tiles</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {surfaceTiles.map(t => (
-                            <div key={t.id + surface} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-teal-300 hover:shadow-sm transition bg-white group">
-                              <div className="flex items-center gap-3 overflow-hidden">
+                            <div key={t.id + surface} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-teal-400 hover:shadow-md transition bg-white group">
+                              <button type="button" onClick={()=>setPreviewTile(t)} aria-label={`Preview ${t.name} (${t.id}) in the showroom`} className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden rounded text-left focus:outline-none focus:ring-2 focus:ring-teal-500">
                                 {t.image ? (
                                   <img src={t.image} alt={t.name} className="w-12 h-12 rounded object-cover border border-gray-200 shrink-0" />
                                 ) : (
@@ -294,9 +357,10 @@ export default function Admin() {
                                     <span>{t.id}</span>
                                     <span className="text-gray-300">•</span>
                                     <span>{t.family}</span>
+                                    {t.orientation&&<span>{t.orientation}</span>}
                                   </div>
                                 </div>
-                              </div>
+                              </button>
                               <button onClick={() => handleDelete(t.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100" title="Delete Asset">
                                 <Trash2 size={16} />
                               </button>

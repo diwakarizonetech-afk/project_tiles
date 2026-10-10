@@ -18,7 +18,7 @@ const walkBounds:{walkX:number;walkZ:number}[]=interiors.map(entry=>({walkX:entr
 export const importedViewpoints=interiors.map((entry,index)=>({x:0,z:centres[index]+(index===0?1.85:entry.viewZ),yaw:entry.yaw,pitch:index===1?-0.08:index===3?0:-.10}))
 export const importedRoomAt=(_x:number,z:number)=>centres.reduce((closest,centre,index)=>Math.abs(z-centre)<Math.abs(z-centres[closest])?index:closest,0)
 
-export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
+export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(message:string)=>void) {
   let disposed=false
   const scene=new THREE.Scene();scene.background=new THREE.Color('#c8d1cb')
   const textures=new Set<THREE.Texture>(),materials=new Set<THREE.Material>(),geometries=new Set<THREE.BufferGeometry>()
@@ -45,10 +45,10 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     const objectUrl=URL.createObjectURL(await response.blob())
     try{return await textureLoader.loadAsync(objectUrl)}finally{URL.revokeObjectURL(objectUrl)}
   }
-  const loadTexture=(url:string,repeatX:number,repeatY=repeatX,color=false)=>{
-    const key=`${url}|${repeatX}|${repeatY}|${color}`;let pending=textureCache.get(key)
+  const loadTexture=(url:string,repeatX:number,repeatY=repeatX,color=false,orientation:Tile['orientation']='Landscape')=>{
+    const key=`${url}|${repeatX}|${repeatY}|${color}|${orientation}`;let pending=textureCache.get(key)
     if(!pending){pending=fetchTexture(url).then(texture=>{if(disposed){texture.dispose();throw new Error('Showroom disposed while loading a texture.')}texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(repeatX,repeatY);texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());if(color)texture.colorSpace=THREE.SRGBColorSpace;cachedTextures.add(texture);return texture}).catch(error=>{textureCache.delete(key);throw error});textureCache.set(key,pending)}
-    return pending.then(texture=>{const instance=texture.clone();instance.needsUpdate=true;return instance})
+    return pending.then(texture=>{const instance=texture.clone();instance.center.set(.5,.5);instance.rotation=orientation==='Portrait'?Math.PI/2:0;instance.needsUpdate=true;return instance})
   }
   const restoreSpecularGlossiness=async(gltf:GLTF)=>{
     const fixed=new Set<THREE.Material>(),definitions=gltf.parser.json.materials??[]
@@ -1074,7 +1074,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     addWall(3,entry.walkX*2,0,entry.walkZ-.045,Math.PI)
     const loadModel=()=>new Promise<void>(resolve=>{const attemptLoad=(attempt:number)=>loader.load(entry.url,async gltf=>{
       if(disposed){disposeLoadedGltf(gltf);resolve();return}
-      if(index===4)void restoreSpecularGlossiness(gltf).catch(error=>console.warn('Could not restore the bathroom GLB material maps',error))
+      if(index===4)void restoreSpecularGlossiness(gltf).catch(error=>{console.warn('Could not restore the bathroom GLB material maps',error);onAssetError?.('Some Modern Bathroom material maps could not be loaded.')})
       const model=gltf.scene
       if(index===4)configureBathroomGlass(model)
       // The uploaded GLB is already Y-up; preserve its authored orientation.
@@ -1452,7 +1452,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       }
       model.updateMatrixWorld(true)
       resolve()
-    },undefined,error=>{if(disposed){resolve();return}if(attempt<2){window.setTimeout(()=>attemptLoad(attempt+1),1200*(attempt+1));return}console.error(`Could not load ${entry.label} after retries`,error);resolve()});attemptLoad(0)})
+    },undefined,error=>{if(disposed){resolve();return}if(attempt<2){window.setTimeout(()=>attemptLoad(attempt+1),1200*(attempt+1));return}console.error(`Could not load ${entry.label} after retries`,error);onAssetError?.(`${entry.label} could not be loaded. Check the model asset and try again.`);resolve()});attemptLoad(0)})
     modelLoads.push(loadModel)
   })
   // Load one room at a time. This avoids several large GLB/HDR responses
@@ -1509,7 +1509,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       if(!normal&&groutBump){material.bumpMap=groutBump;material.bumpScale=0.0035}else if(normal){material.bumpMap=null}
       updateFloorMaterial(room)
       if(normal)material.normalScale.set(.62,.62)
-    }).catch(error=>console.error(`Could not load tile ${tile.id}`,error))
+    }).catch(error=>{console.error(`Could not load tile ${tile.id}`,error);onAssetError?.(`${tile.name} could not be loaded on the floor.`)})
   }
   function setWallStyle(wall:number,style:WallStyle){
     if(!style||!/^#[\da-fA-F]{6}$/.test(style.color))return
@@ -1536,16 +1536,19 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
         material.bumpMap = bump; material.bumpScale = .003; material.roughness = .86; material.needsUpdate = true; return
       }
 
-      const tileDimensions = style.size?.match(/(\d{2,4})\s*[x×]\s*(\d{2,4})/i)
-      const tileWidth = tileDimensions ? Number(tileDimensions[1]) / 1000 : .6
-      const tileHeight = tileDimensions ? Number(tileDimensions[2]) / 1000 : .6
-      const repeatX = mesh.userData.bathroomMetricUV ? 1 / tileWidth : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
-      const repeatY = mesh.userData.bathroomMetricUV ? 1 / tileHeight : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
+      const tileDimensions = style.size?.match(/(\d{2,4})\s*[\u0078\u00D7x×]\s*(\d{2,4})/i)
+      const sideA = tileDimensions ? Number(tileDimensions[1]) / 1000 : .6
+      const sideB = tileDimensions ? Number(tileDimensions[2]) / 1000 : .6
+      const tileWidth = style.orientation === 'Portrait' ? Math.min(sideA, sideB) : Math.max(sideA, sideB)
+      const tileHeight = style.orientation === 'Portrait' ? Math.max(sideA, sideB) : Math.min(sideA, sideB)
+      const repeatX = mesh.userData.bathroomMetricUV ? (style.orientation === 'Portrait' ? 1 / tileHeight : 1 / tileWidth) : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
+      const repeatY = mesh.userData.bathroomMetricUV ? (style.orientation === 'Portrait' ? 1 / tileWidth : 1 / tileHeight) : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
+      const orientation = style.orientation ?? 'Landscape'
 
       void Promise.all([
-        loadTexture(style.image, repeatX, repeatY, true),
-        style.normal ? loadTexture(style.normal, repeatX, repeatY) : Promise.resolve(null),
-        style.roughness ? loadTexture(style.roughness, repeatX, repeatY) : Promise.resolve(null)
+        loadTexture(style.image, repeatX, repeatY, true, orientation),
+        style.normal ? loadTexture(style.normal, repeatX, repeatY, false, orientation) : Promise.resolve(null),
+        style.roughness ? loadTexture(style.roughness, repeatX, repeatY, false, orientation) : Promise.resolve(null)
       ]).then(([texture, normal, roughness]) => {
         if (disposed || request !== wallLoads[wId]) {
           texture.dispose(); normal?.dispose(); roughness?.dispose(); return
@@ -1572,7 +1575,10 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
         material.depthWrite = true
         material.needsUpdate = true
         if (normal) material.normalScale.set(.5, .5)
-      }).catch(error => console.error(`Could not load wall tile for wall ${wId}`, error))
+      }).catch(error => {
+        console.error(`Could not load wall tile for wall ${wId}`, error)
+        onAssetError?.(`The selected wall tile could not be loaded.`)
+      })
     }
 
     const targetMeshes = bathroomSurfaceMap.get(wall) ?? wallMeshes.filter(item => item.userData.wallId === wall)
@@ -1620,5 +1626,24 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     })
   }
   function dispose(){disposed=true;geometries.forEach(geometry=>geometry.dispose());materials.forEach(material=>material.dispose());textures.forEach(texture=>texture.dispose());cachedTextures.forEach(texture=>texture.dispose());wallMaps.forEach(texture=>texture?.dispose());wallDetailMaps.forEach(maps=>maps.forEach(texture=>texture.dispose()));floorMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});wallMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});environment?.dispose()}
-  return {scene,applyTile,setWallStyle,pickSurface,canStand,floorMeshes,setFloorReflection,loadRoom:(room:number)=>room===4?ensureBathroom():modelLoads[room](),getKitchenStart:()=>kitchenStart,getKitchenFloorHeight:()=>kitchenFloorY,getBathroomStart:()=>bathroomStart,getBathroomFloorHeight:()=>bathroomFloorY,getKitchenNavigation:()=>({floorHeight:kitchenFloorY,floorSize:floorPhysicalDimensions[3],walkBoundary:walkBounds[3],colliders:walkObstacleNames}),dispose}
+  function getBathroomPreviewView(surface:'Wall'|'Floor'){
+    const floorBounds=new THREE.Box3();floorTargets[4].forEach(mesh=>floorBounds.union(new THREE.Box3().setFromObject(mesh)))
+    if(floorBounds.isEmpty())return bathroomStart?{...bathroomStart,pitch:0,cameraHeight:1.65}:null
+    if(surface==='Floor'){
+      const center=floorBounds.getCenter(new THREE.Vector3()),size=floorBounds.getSize(new THREE.Vector3()),cameraHeight=THREE.MathUtils.clamp(Math.max(size.x,size.z)*.52,2,2.8),z=center.z+Math.min(size.z*.2,.7),horizontal=Math.abs(z-center.z)
+      return {x:center.x,z,yaw:0,pitch:-Math.atan2(cameraHeight,horizontal),cameraHeight}
+    }
+    const walls=[...bathroomSurfaceMap.entries()].filter(([id])=>id>=16&&id<=19).flatMap(([id,meshes])=>meshes.map(mesh=>({id,mesh,bounds:new THREE.Box3().setFromObject(mesh)}))).filter(item=>!item.bounds.isEmpty()).sort((a,b)=>{
+      const aSize=a.bounds.getSize(new THREE.Vector3()),bSize=b.bounds.getSize(new THREE.Vector3())
+      return bSize.x*bSize.y+bSize.z*bSize.y-(aSize.x*aSize.y+aSize.z*aSize.y)
+    })
+    const chosen=walls[0]
+    if(!chosen)return bathroomStart?{...bathroomStart,pitch:0,cameraHeight:1.65}:null
+    const target=chosen.bounds.getCenter(new THREE.Vector3()),roomCenter=floorBounds.getCenter(new THREE.Vector3()),inward=new THREE.Vector3(roomCenter.x-target.x,0,roomCenter.z-target.z).normalize()
+    if(inward.lengthSq()<.5)inward.set(0,0,-1)
+    const horizontalDistance=THREE.MathUtils.clamp(Math.min(chosen.bounds.getSize(new THREE.Vector3()).x,chosen.bounds.getSize(new THREE.Vector3()).z)*.38,1.25,2.1)
+    const x=target.x+inward.x*horizontalDistance,z=target.z+inward.z*horizontalDistance,dx=target.x-x,dz=target.z-z,dy=target.y-(bathroomFloorY+1.65),horizontal=Math.hypot(dx,dz)
+    return {x,z,yaw:Math.atan2(-dx,-dz),pitch:Math.atan2(dy,horizontal),cameraHeight:1.65,wallId:chosen.id}
+  }
+  return {scene,applyTile,setWallStyle,pickSurface,canStand,floorMeshes,setFloorReflection,loadRoom:(room:number)=>room===4?ensureBathroom():modelLoads[room](),getKitchenStart:()=>kitchenStart,getKitchenFloorHeight:()=>kitchenFloorY,getBathroomStart:()=>bathroomStart,getBathroomPreviewView,getBathroomFloorHeight:()=>bathroomFloorY,getKitchenNavigation:()=>({floorHeight:kitchenFloorY,floorSize:floorPhysicalDimensions[3],walkBoundary:walkBounds[3],colliders:walkObstacleNames}),dispose}
 }

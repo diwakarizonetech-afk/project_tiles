@@ -7,8 +7,8 @@ import { buildImportedHouse, importedRoomAt as roomAt, importedViewpoints as vie
 import { roomNames, sampleUrl, type Tile } from './catalog'
 
 export type ViewHandle = { enter:()=>void; goTo:(room:number)=>void; reset:()=>void; enterVR:()=>Promise<void>; fullscreen:()=>void }
-type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:Record<number, WallStyle> | WallStyle[]; walking:boolean; stereo:boolean; gyro:boolean; brightness:number; floorGlare:number; initialRoom?:number; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onFloorPick:(room:number)=>void; onWalking:(active:boolean)=>void; onGyro:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
-type Runtime = { goTo:(room:number)=>void; reset:()=>void; enter:()=>void; vr:()=>Promise<void>; apply:(room:number,tile:Tile)=>void; styleWall:(wall:number,style:WallStyle)=>void; setFloorReflection:(f:number)=>void; renderer:THREE.WebGLRenderer }
+type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:Record<number, WallStyle> | WallStyle[]; walking:boolean; stereo:boolean; gyro:boolean; brightness:number; floorGlare:number; initialRoom?:number; previewMode?:boolean; previewSurface?:'Wall'|'Floor'; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onFloorPick:(room:number)=>void; onWalking:(active:boolean)=>void; onGyro:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
+type Runtime = { goTo:(room:number)=>void; reset:()=>void; enter:()=>void; vr:()=>Promise<void>; apply:(room:number,tile:Tile)=>void; styleWall:(wall:number,style:WallStyle)=>void; previewView:(surface:'Wall'|'Floor')=>{x:number;z:number;yaw:number;pitch:number;cameraHeight:number;wallId?:number}|null; setFloorReflection:(f:number)=>void; renderer:THREE.WebGLRenderer }
 
 export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props,ref){
   const host=useRef<HTMLDivElement>(null);const runtime=useRef<Runtime|null>(null);const live=useRef(props);const lastApplied=useRef(props.selected);live.current=props
@@ -44,7 +44,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     element.appendChild(renderer.domElement);renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Interactive 3D house. Drag to look. Enter walkthrough, then use W A S D or the arrow keys to move.');renderer.domElement.setAttribute('role','application')
     let house: ReturnType<typeof buildImportedHouse>
     try {
-      house=buildImportedHouse(renderer)
+      house=buildImportedHouse(renderer,message=>live.current.onNotice(message))
     } catch(err) {
       console.error('3D scene construction failed:', err)
       setError('3D graphics could not be initialized. Click below to try again.')
@@ -55,7 +55,35 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     const stereoCamera=new THREE.StereoCamera();stereoCamera.eyeSep=.064
     const keys=new Set<string>();let pitch=-.14,last=0,uiTime=0,previousRoom=-1,disposed=false,width=1,height=1,kitchenSpawnApplied=false;let dragging=false,oldX=0,oldY=0
     let bathroomSpawnApplied=false
-    const goTo=(i:number)=>{if(i===4)void house.loadRoom(4);const kitchen=i===3?house.getKitchenStart():null,bathroom=i===4?house.getBathroomStart():null,p=kitchen??bathroom??viewpoints[i],floorY=kitchen?house.getKitchenFloorHeight():bathroom?house.getBathroomFloorHeight():0;rig.position.set(p.x,floorY,p.z);rig.rotation.y=p.yaw;pitch=kitchen||bathroom?0:viewpoints[i].pitch;if(kitchen)kitchenSpawnApplied=true;if(bathroom&&!bathroomSpawnApplied){Object.entries(live.current.wallStyles).forEach(([w,s])=>house.setWallStyle(Number(w),s));const floorTile=live.current.selected[4];if(floorTile)house.applyTile(4,floorTile);bathroomSpawnApplied=true}if(!renderer.xr.isPresenting){camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0)}live.current.onRoom(i)}
+    const applyPreviewWallStyle=()=>{
+      const focus=house.getBathroomPreviewView(live.current.previewSurface??'Wall')
+      const stylesList=Array.isArray(live.current.wallStyles)?live.current.wallStyles.slice(16,21):Object.entries(live.current.wallStyles).filter(([k])=>Number(k)>=16&&Number(k)<=20).map(([,v])=>v)
+      const style=stylesList.find(item=>item.image||item.normal||item.roughness)||{color:'#f0ece6',design:'paint' as const}
+      for(let wall=16;wall<=20;wall++)house.setWallStyle(wall,live.current.previewMode&&live.current.previewSurface==='Wall'&&wall===focus?.wallId?style:{color:'#f0ece6',design:'paint'})
+    }
+    const goTo=(i:number)=>{
+      if(i===4)void house.loadRoom(4)
+      const kitchen=i===3?house.getKitchenStart():null,bathroom=i===4?house.getBathroomStart():null
+      const focused=i===4&&live.current.previewMode?house.getBathroomPreviewView(live.current.previewSurface??'Wall'):null
+      const p=focused??kitchen??bathroom??viewpoints[i]
+      const floorY=kitchen?house.getKitchenFloorHeight():bathroom||focused?house.getBathroomFloorHeight():0
+      rig.position.set(p.x,floorY,p.z)
+      rig.rotation.y=p.yaw
+      pitch=focused?focused.pitch:kitchen||bathroom?0:viewpoints[i].pitch
+      if(kitchen)kitchenSpawnApplied=true
+      if(bathroom&&!bathroomSpawnApplied){
+        if(live.current.previewMode)applyPreviewWallStyle()
+        else Object.entries(live.current.wallStyles).forEach(([w,s])=>house.setWallStyle(Number(w),s))
+        const floorTile=live.current.selected[4]
+        if(floorTile)house.applyTile(4,floorTile)
+        bathroomSpawnApplied=true
+      }
+      if(!renderer.xr.isPresenting){
+        camera.position.set(0,focused?.cameraHeight??1.65,0)
+        camera.rotation.set(pitch,0,0)
+      }
+      live.current.onRoom(i)
+    }
     goTo(live.current.initialRoom ?? 2)
     live.current.selected.forEach((tile,i)=>house.applyTile(i,tile))
     Object.entries(live.current.wallStyles).forEach(([w,style])=>house.setWallStyle(Number(w),style))
@@ -115,7 +143,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     const onStart=()=>{clear();camera.position.set(0,0,0);camera.rotation.set(0,0,0);live.current.onXR(true)}
     const onEnd=()=>{camera.position.set(0,1.65,0);camera.rotation.set(pitch,0,0);teleport.visible=false;live.current.onXR(false)}
     renderer.xr.addEventListener('sessionstart',onStart);renderer.xr.addEventListener('sessionend',onEnd)
-    runtime.current={renderer,apply:house.applyTile,styleWall:house.setWallStyle,setFloorReflection:house.setFloorReflection,goTo,reset:()=>goTo(roomAt(rig.position.x,rig.position.z)),enter:()=>{live.current.onWalking(true);renderer.domElement.focus({preventScroll:true});if(matchMedia('(pointer:fine)').matches){const request=renderer.domElement.requestPointerLock?.();request?.catch(()=>live.current.onNotice('Drag the scene to look around. Use W/A/S/D to walk.'))}},vr:async()=>{
+    runtime.current={renderer,apply:house.applyTile,styleWall:house.setWallStyle,previewView:house.getBathroomPreviewView,setFloorReflection:house.setFloorReflection,goTo,reset:()=>goTo(live.current.previewMode?4:roomAt(rig.position.x,rig.position.z)),enter:()=>{live.current.onWalking(true);renderer.domElement.focus({preventScroll:true});if(matchMedia('(pointer:fine)').matches){const request=renderer.domElement.requestPointerLock?.();request?.catch(()=>live.current.onNotice('Drag the scene to look around. Use W/A/S/D to walk.'))}},vr:async()=>{
       if(!navigator.xr||!window.isSecureContext){live.current.onNotice('Headset VR needs a compatible WebXR browser on HTTPS or localhost. You can still walk through the house in normal mode.');return}
       try{if(renderer.xr.isPresenting){await renderer.xr.getSession()?.end();return}if(!await navigator.xr.isSessionSupported('immersive-vr')){live.current.onNotice('No compatible VR headset detected. Use Stereo preview to see both eye views, or continue in normal mode.');return}const session=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','bounded-floor']});if(disposed){await session.end();return}document.exitPointerLock();await renderer.xr.setSession(session)}catch{live.current.onNotice('VR could not start. Connect your headset and allow the browser’s VR permission, then try again.')}
     }}
@@ -151,20 +179,30 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
   useEffect(()=>{if(lastApplied.current===props.selected)return;lastApplied.current=props.selected;props.selected.forEach((tile,i)=>runtime.current?.apply(i,tile))},[props.selected])
   useEffect(()=>{
     if(!props.wallStyles)return
+    if(props.previewMode){
+      const stylesList=Array.isArray(props.wallStyles)?props.wallStyles.slice(16,21):Object.entries(props.wallStyles).filter(([k])=>Number(k)>=16&&Number(k)<=20).map(([,v])=>v as WallStyle)
+      if(live.current.previewSurface==='Wall'){
+        const focus=runtime.current?.previewView('Wall'),style=stylesList.find(item=>item.image||item.normal||item.roughness)||{color:'#f0ece6',design:'paint' as const}
+        for(let wall=16;wall<=20;wall++)runtime.current?.styleWall(wall,wall===focus?.wallId?style:{color:'#f0ece6',design:'paint'})
+      }else{
+        for(let wall=16;wall<=20;wall++)runtime.current?.styleWall(wall,{color:'#f0ece6',design:'paint'})
+      }
+      return
+    }
     if(Array.isArray(props.wallStyles)){
       props.wallStyles.forEach((style,i)=>runtime.current?.styleWall(i,style))
     }else{
       Object.entries(props.wallStyles).forEach(([w,style])=>runtime.current?.styleWall(Number(w),style as WallStyle))
     }
-  },[props.wallStyles])
+  },[props.wallStyles,props.previewMode,props.previewSurface])
   useEffect(()=>{if(!props.walking){movement.current={x:0,z:0};if(document.pointerLockElement)document.exitPointerLock()}},[props.walking])
   useEffect(()=>{if(!props.gyro)gyroSession.current=false},[props.gyro])
   useEffect(()=>{runtime.current?.setFloorReflection(props.floorGlare)},[props.floorGlare])
   const hold=(x:number,z:number)=>({onPointerDown:(event:React.PointerEvent<HTMLButtonElement>)=>{event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);movement.current={x,z}},onPointerUp:()=>{movement.current={x:0,z:0}},onPointerCancel:()=>{movement.current={x:0,z:0}},onLostPointerCapture:()=>{movement.current={x:0,z:0}}})
-  return <><div className="three-host" ref={host}/>{error&&<div className="graphics-error material-fallback" role="status"><div className="fallback-sample"><img src={sampleUrl(props.selected[roomAt(position.x,position.z)])} alt="Selected tile texture preview"/><span>2D MATERIAL PREVIEW</span></div><div className="fallback-copy"><p>MJP CERAMICS / MATERIAL STUDIO</p><h2>Your next favourite surface.</h2><p>3D is temporarily unavailable on this device. You can still explore tile designs and upload your own.</p><strong>{props.selected[roomAt(position.x,position.z)].name}</strong><div className="fallback-actions"><button onClick={props.onBrowse}>Explore tile collections</button><button onClick={()=>setAttempt(n=>n+1)}>Try 3D again</button></div><small>For 3D, enable browser graphics acceleration and close unused 3D tabs.</small></div></div>}
-    {!error&&<div className="floorplan" aria-label={`Your location: ${roomNames[roomAt(position.x,position.z)]}`}><span>THE INTERIORS</span><svg viewBox="0 0 160 160" role="img" aria-label="Imported interior selector">{roomNames.map((label,i)=><g key={label}><rect x={i%2?83:5} y={9+Math.floor(i/2)*36} width="72" height="27" rx="2" fill={roomAt(position.x,position.z)===i?'#d9c28a':'#f5f0e5'} stroke="#8c887f"/><text x={i%2?119:41} y={26+Math.floor(i/2)*36}>{String(i+1).padStart(2,'0')}</text></g>)}</svg><small>{roomNames[roomAt(position.x,position.z)]}</small></div>}
-    {hoverHint&&!props.stereo&&<div className="surface-hover-hint" role="status">{hoverHint}</div>}
-    {props.walking&&<><span className="crosshair" aria-hidden="true">+</span><div className="walk-help">{locked?'W A S D to walk · Mouse to look · Esc to release':'Drag to look · W A S D / arrows to walk'}<button aria-label="Reset room viewpoint" onClick={()=>runtime.current?.reset()}><RotateCcw size={15}/></button></div><div className="move-pad" aria-label="Movement controls"><button className="forward" aria-label="Walk forward" {...hold(0,-1)}><ArrowUp/></button><button aria-label="Walk left" {...hold(-1,0)}><ArrowLeft/></button><button aria-label="Walk backward" {...hold(0,1)}><ArrowDown/></button><button aria-label="Walk right" {...hold(1,0)}><ArrowRight/></button></div></>}
+  return <><div className="three-host" ref={host}/>{error&&<div className="graphics-error material-fallback" role="status">{props.previewMode?<div className="fallback-copy"><p>SHOWROOM PREVIEW</p><h2>3D preview unavailable</h2><p>{error}</p></div>:<><div className="fallback-sample"><img src={sampleUrl(props.selected[roomAt(position.x,position.z)])} alt="Selected tile texture preview"/><span>2D MATERIAL PREVIEW</span></div><div className="fallback-copy"><p>MJP CERAMICS / MATERIAL STUDIO</p><h2>Your next favourite surface.</h2><p>3D is temporarily unavailable on this device. You can still explore tile designs and upload your own.</p><strong>{props.selected[roomAt(position.x,position.z)].name}</strong><div className="fallback-actions"><button onClick={props.onBrowse}>Explore tile collections</button><button onClick={()=>setAttempt(n=>n+1)}>Try 3D again</button></div><small>For 3D, enable browser graphics acceleration and close unused 3D tabs.</small></div></>}</div>}
+    {!props.previewMode&&!error&&<div className="floorplan" aria-label={`Your location: ${roomNames[roomAt(position.x,position.z)]}`}><span>THE INTERIORS</span><svg viewBox="0 0 160 160" role="img" aria-label="Imported interior selector">{roomNames.map((label,i)=><g key={label}><rect x={i%2?83:5} y={9+Math.floor(i/2)*36} width="72" height="27" rx="2" fill={roomAt(position.x,position.z)===i?'#d9c28a':'#f5f0e5'} stroke="#8c887f"/><text x={i%2?119:41} y={26+Math.floor(i/2)*36}>{String(i+1).padStart(2,'0')}</text></g>)}</svg><small>{roomNames[roomAt(position.x,position.z)]}</small></div>}
+    {!props.previewMode&&hoverHint&&!props.stereo&&<div className="surface-hover-hint" role="status">{hoverHint}</div>}
+    {props.walking&&<>{!props.previewMode&&<span className="crosshair" aria-hidden="true">+</span>}{!props.previewMode&&<div className="walk-help">{locked?'W A S D to walk · Mouse to look · Esc to release':'Drag to look · W A S D / arrows to walk'}<button aria-label="Reset room viewpoint" onClick={()=>runtime.current?.reset()}><RotateCcw size={15}/></button></div>}<div className="move-pad" aria-label="Movement controls"><button className="forward" aria-label="Walk forward" {...hold(0,-1)}><ArrowUp/></button><button aria-label="Walk left" {...hold(-1,0)}><ArrowLeft/></button><button aria-label="Walk backward" {...hold(0,1)}><ArrowDown/></button><button aria-label="Walk right" {...hold(1,0)}><ArrowRight/></button></div></>}
     {props.stereo&&<div className="stereo-divider"><span>STEREO PREVIEW</span></div>}
   </>
 })
