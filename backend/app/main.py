@@ -11,12 +11,11 @@ from sqlalchemy.orm import Session
 
 from .config import ALLOWED_IMAGE_TYPES, CATALOG_DIR, CORS_ORIGINS, MAX_UPLOAD_BYTES, UPLOAD_DIR, VR_ALLOWED_ORIGINS, VR_DEFAULT_MOVEMENT_SPEED, VR_ENABLED, VR_REQUIRE_HTTPS, VR_ROOM_SCALE, VR_TELEPORT_ENABLED
 from .database import Base, engine, get_db
-from .database import Base, engine, get_db
 from .models import TileDesign, Inquiry
 from .schemas import TileDesignOut, VrSettingsOut, InquiryIn, InquiryOut
 
 CODE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9-]{2,24}$")
-FAMILIES = {"Marble", "Stone", "Terrazzo", "Wood", "Pattern"}
+FAMILIES = {"Granite", "Marble", "Stone", "Terrazzo", "Wood", "Pattern"}
 SURFACES = {"Floor", "Wall", "Both"}
 
 @asynccontextmanager
