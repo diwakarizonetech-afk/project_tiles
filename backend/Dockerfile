@@ -6,6 +6,7 @@ COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini .
 COPY catalog ./catalog
+COPY seed_granite_tiles.py .
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "alembic upgrade head && python seed_granite_tiles.py && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
