@@ -1,16 +1,18 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, Float, Integer, LargeBinary, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, Integer, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
 class TileDesign(Base):
     __tablename__ = "tile_designs"
+    __table_args__ = (CheckConstraint("orientation IN ('Landscape', 'Portrait')", name="ck_tile_designs_orientation"),)
 
     code: Mapped[str] = mapped_column(String(25), primary_key=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     family: Mapped[str] = mapped_column(String(30), nullable=False)
     finish: Mapped[str] = mapped_column(String(60), nullable=False)
     surface: Mapped[str] = mapped_column(String(10), nullable=False)
+    orientation: Mapped[str] = mapped_column(String(10), default="Landscape", server_default="Landscape", nullable=False)
     image_path: Mapped[str] = mapped_column(Text, nullable=False)
     image_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     image_content_type: Mapped[str | None] = mapped_column(String(50), nullable=True)

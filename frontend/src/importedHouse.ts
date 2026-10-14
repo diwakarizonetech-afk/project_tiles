@@ -1,23 +1,26 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js'
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
-import { isSlab2x4, type Tile } from './catalog'
+import { getSizeVariationKey, isSlab2x4, isTile1x1, isTile1x2, type Tile } from './catalog'
 import type { WallStyle } from './house'
+import { setupSouthIndianHouse } from './southIndianHouse'
 
 const interiors = [
   {url:'/models/mjp-cozy-living.glb',label:'Cozy living room',viewZ:2.25,yaw:0,maxSpan:7,walkX:2.75,walkZ:2.45},
   {url:'/models/mjp-modern-bedroom.glb',label:'Modern bedroom',viewZ:2.15,yaw:0,maxSpan:7,walkX:2.85,walkZ:2.65},
   {url:'/models/mjp-vr-gallery.glb',label:'VR gallery',viewZ:2.3,yaw:0,maxSpan:7,walkX:2.8,walkZ:2.8},
   {url:'/models/modern_scandinavian_kitchen_island.glb',label:'Cooking Club',environmentType:'cooking-club',viewZ:0,yaw:0,maxSpan:12,walkX:5,walkZ:3.7},
+  {url:'/models/modern-bathroom.glb',label:'Modern Bathroom',environmentType:'modern-bathroom',viewZ:0,yaw:Math.PI,maxSpan:10,walkX:1.9,walkZ:3.5},
+  {url:'',label:'Hall & Portico',environmentType:'south-indian-home',viewZ:6.8,yaw:0.28,maxSpan:14,walkX:5.2,walkZ:6.8},
 ] as const
 const centres=interiors.map((_,index)=>index*18)
 const walkBounds:{walkX:number;walkZ:number}[]=interiors.map(entry=>({walkX:entry.walkX,walkZ:entry.walkZ}))
-export const importedViewpoints=interiors.map((entry,index)=>({x:0,z:centres[index]+(index===0?1.85:entry.viewZ),yaw:entry.yaw,pitch:index===1?-0.08:index===3?0:-.10}))
+export const importedViewpoints=interiors.map((entry,index)=>({x:index===5?2.2:0,z:centres[index]+(index===0?1.85:entry.viewZ),yaw:entry.yaw,pitch:index===1?-0.08:index===3?0:index===5?-0.22:-.10}))
 export const importedRoomAt=(_x:number,z:number)=>centres.reduce((closest,centre,index)=>Math.abs(z-centre)<Math.abs(z-centres[closest])?index:closest,0)
 
-export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
+export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(message:string)=>void) {
   let disposed=false
   const scene=new THREE.Scene();scene.background=new THREE.Color('#c8d1cb')
   const textures=new Set<THREE.Texture>(),materials=new Set<THREE.Material>(),geometries=new Set<THREE.BufferGeometry>()
@@ -33,7 +36,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   sun.shadow.camera.left=-4.5;sun.shadow.camera.right=4.5;sun.shadow.camera.top=4.5;sun.shadow.camera.bottom=-4.5
   sun.shadow.bias=-0.00015;sun.shadow.normalBias=0.025
   scene.add(sun)
-  const loader=new GLTFLoader().setMeshoptDecoder(MeshoptDecoder)
+  const loader=new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).register(()=>({name:'KHR_materials_pbrSpecularGlossiness'}))
   const textureLoader=new THREE.TextureLoader(),textureCache=new Map<string,Promise<THREE.Texture>>(),cachedTextures=new Set<THREE.Texture>()
   // Tile URLs are also used by regular image previews. Chrome can reuse a
   // non-CORS image-cache entry for Three.js and reject it even after a 200.
@@ -44,17 +47,186 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     const objectUrl=URL.createObjectURL(await response.blob())
     try{return await textureLoader.loadAsync(objectUrl)}finally{URL.revokeObjectURL(objectUrl)}
   }
-  const loadTexture=(url:string,repeatX:number,repeatY=repeatX,color=false)=>{
-    const key=`${url}|${repeatX}|${repeatY}|${color}`;let pending=textureCache.get(key)
-    if(!pending){pending=fetchTexture(url).then(texture=>{texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(repeatX,repeatY);texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());if(color)texture.colorSpace=THREE.SRGBColorSpace;cachedTextures.add(texture);return texture}).catch(error=>{textureCache.delete(key);throw error});textureCache.set(key,pending)}
-    return pending.then(texture=>{const instance=texture.clone();instance.needsUpdate=true;return instance})
+  const createBorderedTileTexture = (
+    sourceImg: CanvasImageSource,
+    sizeKey: '4x2' | '2x2' | '1x1',
+    repeatX: number,
+    repeatY: number,
+    orientation: Tile['orientation'] = 'Landscape'
+  ): THREE.CanvasTexture => {
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')!
+
+    const srcW = Number((sourceImg as any).videoWidth || (sourceImg as any).naturalWidth || (sourceImg as any).width || 1024)
+    const srcH = Number((sourceImg as any).videoHeight || (sourceImg as any).naturalHeight || (sourceImg as any).height || 1024)
+
+    let targetW = 1024
+    let targetH = 1024
+
+    if (sizeKey === '4x2') {
+      if (orientation === 'Portrait') {
+        targetW = 1024
+        targetH = 2048
+      } else {
+        targetW = 2048
+        targetH = 1024
+      }
+    } else {
+      targetW = 1024
+      targetH = 1024
+    }
+
+    canvas.width = targetW
+    canvas.height = targetH
+
+    const targetAspect = targetW / targetH
+    const srcAspect = srcW / srcH
+    let cropX = 0, cropY = 0, cropW = srcW, cropH = srcH
+    if (srcAspect > targetAspect) {
+      cropW = srcH * targetAspect
+      cropX = (srcW - cropW) / 2
+    } else {
+      cropH = srcW / targetAspect
+      cropY = (srcH - cropH) / 2
+    }
+
+    ctx.drawImage(sourceImg, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH)
+
+    // White borders matching the tile size
+    const borderHalf = sizeKey === '1x1' ? 4 : (sizeKey === '2x2' ? 5 : 6)
+    ctx.save()
+    // 1. Crisp bright white grout border
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = borderHalf * 2
+    ctx.strokeRect(0, 0, targetW, targetH)
+
+    // 2. Subtle soft bevel accent
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.12)'
+    ctx.lineWidth = 1.5
+    ctx.strokeRect(borderHalf, borderHalf, targetW - borderHalf * 2, targetH - borderHalf * 2)
+    ctx.restore()
+
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+    texture.repeat.set(repeatX, repeatY)
+    texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy())
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.generateMipmaps = true
+    texture.minFilter = THREE.LinearMipmapLinearFilter
+    texture.magFilter = THREE.LinearFilter
+    texture.needsUpdate = true
+    return texture
+  }
+
+  const loadTexture = (
+    url: string,
+    repeatX: number,
+    repeatY = repeatX,
+    color = false,
+    orientation: Tile['orientation'] = 'Landscape',
+    sizeKey: '4x2' | '2x2' | '1x1' = '4x2',
+    withWhiteBorder = false
+  ) => {
+    const key = `${url}|${repeatX}|${repeatY}|${color}|${orientation}|${sizeKey}|${withWhiteBorder}`
+    let pending = textureCache.get(key)
+    if (!pending) {
+      pending = fetchTexture(url).then(baseTexture => {
+        if (disposed) {
+          baseTexture.dispose()
+          throw new Error('Showroom disposed while loading a texture.')
+        }
+
+        let texture: THREE.Texture
+        if (color && withWhiteBorder && baseTexture.image) {
+          texture = createBorderedTileTexture(baseTexture.image, sizeKey, repeatX, repeatY, orientation)
+        } else {
+          texture = baseTexture.clone()
+          texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+          texture.repeat.set(repeatX, repeatY)
+          texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy())
+          if (color) texture.colorSpace = THREE.SRGBColorSpace
+        }
+
+        cachedTextures.add(texture)
+        return texture
+      }).catch(error => {
+        textureCache.delete(key)
+        throw error
+      })
+      textureCache.set(key, pending)
+    }
+
+    return pending.then(texture => {
+      const instance = texture.clone()
+      instance.center.set(0.5, 0.5)
+      instance.rotation = (!withWhiteBorder && orientation === 'Portrait') ? Math.PI / 2 : 0
+      instance.needsUpdate = true
+      return instance
+    })
+  }
+  const restoreSpecularGlossiness=async(gltf:GLTF)=>{
+    const fixed=new Set<THREE.Material>(),definitions=gltf.parser.json.materials??[]
+    const makeRoughnessMap=(source:THREE.Texture,channel:number,glossiness:number)=>{
+      const image=source.image as CanvasImageSource&{width?:number;height?:number},width=image.width??0,height=image.height??0
+      if(!width||!height)return undefined
+      const scale=Math.min(1,512/Math.max(width,height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(width*scale));canvas.height=Math.max(1,Math.round(height*scale))
+      const context=canvas.getContext('2d');if(!context)return undefined
+      context.drawImage(image,0,0,canvas.width,canvas.height)
+      const pixels=context.getImageData(0,0,canvas.width,canvas.height),data=pixels.data
+      for(let offset=0;offset<data.length;offset+=4){const value=255-Math.round(data[offset+3]*glossiness);data[offset]=data[offset+1]=data[offset+2]=value;data[offset+3]=255}
+      context.putImageData(pixels,0,0)
+      const roughness=new THREE.CanvasTexture(canvas);roughness.channel=channel;roughness.colorSpace=THREE.NoColorSpace;roughness.wrapS=source.wrapS;roughness.wrapT=source.wrapT;roughness.repeat.copy(source.repeat);roughness.offset.copy(source.offset);roughness.center.copy(source.center);roughness.rotation=source.rotation;roughness.flipY=source.flipY;roughness.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());return roughness
+    }
+    const restore=async(material:THREE.Material)=>{
+      if(fixed.has(material))return
+      const association=gltf.parser.associations.get(material),definition=typeof association?.materials==='number'?definitions[association.materials]:undefined
+      // The authored ShowerScreen material has alpha=0. It is replaced with a
+      // physical glass material on the same mesh after the GLB is parsed.
+      if(definition?.name==='ShowerScreen')return
+      const extension=definition?.extensions?.KHR_materials_pbrSpecularGlossiness
+      if(!extension||!(material instanceof THREE.MeshStandardMaterial))return
+      fixed.add(material)
+      const factor=extension.diffuseFactor??[1,1,1,1],glossiness=extension.glossinessFactor??1
+      material.color.setRGB(factor[0],factor[1],factor[2],THREE.LinearSRGBColorSpace);material.opacity=factor[3];material.transparent=definition.alphaMode==='BLEND'||factor[3]<1;material.depthWrite=!material.transparent;material.metalness=0;material.roughness=THREE.MathUtils.clamp(1-glossiness,0.04,1)
+      if(extension.diffuseTexture){const texture=await gltf.parser.getDependency('texture',extension.diffuseTexture.index) as THREE.Texture;if(disposed){texture.dispose();return}texture.channel=extension.diffuseTexture.texCoord??0;texture.colorSpace=THREE.SRGBColorSpace;material.map=texture;textures.add(texture)}
+      if(extension.specularGlossinessTexture){
+        const textureInfo=extension.specularGlossinessTexture,source=await gltf.parser.getDependency('texture',textureInfo.index) as THREE.Texture;if(disposed){source.dispose();return}textures.add(source);const roughness=makeRoughnessMap(source,textureInfo.texCoord??0,glossiness)
+        if(roughness){if(disposed)roughness.dispose();else{material.roughnessMap=roughness;textures.add(roughness)}}
+      }
+      material.needsUpdate=true
+    }
+    const jobs:Promise<void>[]=[]
+    gltf.scene.traverse(object=>{if(object instanceof THREE.Mesh)for(const material of Array.isArray(object.material)?object.material:[object.material])jobs.push(restore(material))})
+    await Promise.all(jobs)
+  }
+  const configureBathroomGlass=(model:THREE.Group)=>{
+    const screen=model.getObjectByName('Modern_Bathroom_ShowerScreen_0')
+    if(!(screen instanceof THREE.Mesh))return
+    const previous=Array.isArray(screen.material)?screen.material:[screen.material]
+    const glass=new THREE.MeshPhysicalMaterial({
+      color:'#e4f1f3',metalness:0,roughness:.11,ior:1.45,
+      transmission:.9,thickness:.006,attenuationColor:'#eaf5f6',attenuationDistance:6,
+      clearcoat:.18,clearcoatRoughness:.12,specularIntensity:.85,
+      envMapIntensity:1.1,side:THREE.DoubleSide,
+      transparent:true,opacity:.25,depthWrite:false,depthTest:true,
+    })
+    screen.material=glass
+    previous.forEach(material=>{for(const value of Object.values(material))if(value instanceof THREE.Texture)textures.add(value);material.dispose()})
+    screen.castShadow=false
+    screen.receiveShadow=false
+    screen.userData.environmentFixture=true
+    materials.add(glass)
   }
   const floorPhysicalDimensions=interiors.map(entry=>({width:entry.walkX*2,depth:entry.walkZ*2}))
   const getFloorDimensions=(room:number)=>{
     if(room===0)return {width:6.2,depth:5.2}
     if(room===1)return {width:5.7,depth:5.3}
     if(room===3)return floorPhysicalDimensions[room]
-    const entry=interiors[room]
+    if(room===5)return {width:7.6,depth:5.0}
+    if(room===6)return {width:3.6,depth:3.2}
+    if(room===7)return {width:4.0,depth:5.4}
+    if(room===8)return {width:3.6,depth:2.8}
+    const entry=interiors[room<interiors.length?room:5]
     return {width:(entry?.walkX??2.8)*2,depth:(entry?.walkZ??2.8)*2}
   }
   const getTileRepeats=(room:number,tile:Tile)=>{
@@ -62,20 +234,31 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     if(tile.family==='Wood'){
       return {repeatX:Math.round(dims.width/0.45*10)/10,repeatY:Math.round(dims.depth/1.8*10)/10}
     }
+    const is1x1=isTile1x1(tile.size)
+    if(is1x1){
+      // 1' x 1' (300 x 300 mm) Square Tile
+      return {repeatX:Math.max(1,Math.round(dims.width/0.30*10)/10),repeatY:Math.max(1,Math.round(dims.depth/0.30*10)/10)}
+    }
     const is2x4=isSlab2x4(tile.size)
     if(is2x4){
-      // 2' x 4' (600 x 1200 mm) Large Format Slab
+      // 2' x 4' / 4' x 2' (600 x 1200 mm) Large Format Slab
       return {repeatX:Math.max(1,Math.round(dims.width/0.60*10)/10),repeatY:Math.max(1,Math.round(dims.depth/1.20*10)/10)}
+    }
+    const is1x2=isTile1x2(tile.size)
+    if(is1x2){
+      // 1' x 2' (300 x 600 mm) Tile
+      return {repeatX:Math.max(1,Math.round(dims.width/0.30*10)/10),repeatY:Math.max(1,Math.round(dims.depth/0.60*10)/10)}
     }
     // 2' x 2' (600 x 600 mm) Square Tile
     return {repeatX:Math.max(1,Math.round(dims.width/0.60*10)/10),repeatY:Math.max(1,Math.round(dims.depth/0.60*10)/10)}
   }
   const groutBumpCache=new Map<string,THREE.Texture>()
-  const getGroutBump=(is2x4:boolean,repX:number,repY:number)=>{
-    const key=`${is2x4?'2x4':'2x2'}|${repX}|${repY}`
+  const getGroutBump=(sizeKey:'4x2'|'2x2'|'1x1'|'1x2',repX:number,repY:number)=>{
+    const key=`${sizeKey}|${repX}|${repY}`
     const existing=groutBumpCache.get(key)
     if(existing)return existing
-    const w=512,h=is2x4?1024:512
+    const w=sizeKey==='1x2'?256:(sizeKey==='4x2'?512:512)
+    const h=sizeKey==='4x2'?1024:512
     const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h
     const ctx=canvas.getContext('2d')!
     ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h)
@@ -87,26 +270,32 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     groutBumpCache.set(key,texture)
     return texture
   }
+  const TOTAL_FLOORS=9
   const floorMeshes:THREE.Mesh[]=[]
   const floorMaterials:THREE.MeshStandardMaterial[]=[]
-  const floorAppliedTiles:(Tile|undefined)[]=interiors.map(()=>undefined)
+  const floorAppliedTiles:(Tile|undefined)[]=Array(TOTAL_FLOORS).fill(undefined)
   let floorReflectionLevel=0.35
-  const floorMaps:THREE.Texture[][]=interiors.map(()=>[])
-  const floorTargets:THREE.Mesh[][]=interiors.map(()=>[])
-  const floorLoads=interiors.map(()=>0)
+  const floorMaps:THREE.Texture[][]=Array.from({length:TOTAL_FLOORS},()=>[])
+  const floorTargets:THREE.Mesh[][]=Array.from({length:TOTAL_FLOORS},()=>[])
+  const floorLoads=Array(TOTAL_FLOORS).fill(0)
   const wallMeshes:THREE.Mesh[]=[]
+  const bathroomSurfaceMap=new Map<number,THREE.Mesh[]>()
   const wallMaterials:THREE.MeshStandardMaterial[]=[]
-  const wallMaps:(THREE.Texture|undefined)[]=Array(interiors.length*4+1)
-  const wallDetailMaps:THREE.Texture[][]=Array.from({length:interiors.length*4+1},()=>[])
-  const wallLoads=Array(interiors.length*4+1).fill(0)
-  const wallSeen=Array(interiors.length*4+1).fill(false)
+  const wallMaps:(THREE.Texture|undefined)[]=Array(interiors.length*4+8)
+  const wallDetailMaps:THREE.Texture[][]=Array.from({length:interiors.length*4+8},()=>[])
+  const wallLoads=Array(interiors.length*4+8).fill(0)
+  const wallSeen=Array(interiors.length*4+8).fill(false)
   const modelLoads:Array<()=>Promise<void>>=[]
   const cookingSurfaces:{floor:THREE.Mesh[];walls:THREE.Mesh[];backsplash:THREE.Mesh[]}={floor:[],walls:[],backsplash:[]}
   const walkObstacles:THREE.Box3[]=[]
   const walkObstacleNames:string[]=[]
   const kitchenWalkTriangles:{a:THREE.Vector2;b:THREE.Vector2;c:THREE.Vector2;bounds:THREE.Box2}[]=[]
+  const bathroomObstacles:THREE.Box3[]=[]
   let kitchenFloorY=0
   let kitchenStart:{x:number;z:number;yaw:number}|null=null
+  let bathroomFloorY=0
+  let bathroomStart:{x:number;z:number;yaw:number}|null=null
+  const disposeLoadedGltf=(gltf:GLTF)=>{const pendingTextures=new Set<THREE.Texture>(),pendingMaterials=new Set<THREE.Material>(),pendingGeometry=new Set<THREE.BufferGeometry>();gltf.scene.traverse(object=>{if(!(object instanceof THREE.Mesh))return;pendingGeometry.add(object.geometry);for(const material of Array.isArray(object.material)?object.material:[object.material]){pendingMaterials.add(material);for(const value of Object.values(material))if(value instanceof THREE.Texture)pendingTextures.add(value)}});pendingGeometry.forEach(geometry=>geometry.dispose());pendingMaterials.forEach(material=>material.dispose());pendingTextures.forEach(texture=>texture.dispose())}
 
   // Procedural normal and bump map generators for realistic tactile materials
   const createProceduralTexture=(draw:(ctx:CanvasRenderingContext2D,w:number,h:number)=>void,w=512,h=w)=>{
@@ -959,6 +1148,162 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     const ambFill=new THREE.PointLight('#e8d8c8',0.22,10,2)
     ambFill.position.set(0,F+2.80,0);group.add(ambFill)
   }
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // REALISTIC SCANDINAVIAN COOKING CLUB (ROOM 3)
+  // Clean architectural plain walls (no diagonal cross-lines) & bedroom-style cinematic lighting:
+  // - Replaces low-poly triangulated GLB shell with clean planar architectural walls
+  // - Perfectly flat, smooth walls with zero polygon seams or cross-lines
+  // - Golden morning window key sun light with soft shadow bias & cool sky bounce
+  // - Recessed ceiling downlights, warm pendant glow, under-island floor wash & cove
+  // ═════════════════════════════════════════════════════════════════════════════
+  const setupRealisticCookingClub=(
+    group:THREE.Group,
+    model:THREE.Group,
+    authoredFloorY:number,
+    floor:THREE.Mesh,
+    floorMaterial:THREE.MeshStandardMaterial,
+    wallMaterials:THREE.MeshStandardMaterial[],
+    wallMeshes:THREE.Mesh[]
+  )=>{
+    // 1. Hide original triangulated low-fidelity GLB room shell meshes
+    model.traverse(obj=>{ if(obj instanceof THREE.Mesh && obj.name.startsWith('house_')) obj.visible=false })
+    const F=authoredFloorY
+
+    // 2. Connect customizable floor tile directly to the room floor
+    floor.visible=true
+    floor.position.set(0,F,0)
+    floor.receiveShadow=true
+    floor.castShadow=false
+    floor.material=floorMaterial
+    floor.userData.floorRoom=3
+    floor.userData.floor=true
+    floor.geometry=new THREE.PlaneGeometry(11.60,8.80)
+
+    // 3. Clean architectural materials (zero envMapIntensity on diffuse surfaces eliminates HDR glare)
+    const wallDefaultMat=new THREE.MeshStandardMaterial({color:'#ddd2bf',roughness:.88,envMapIntensity:0,side:THREE.DoubleSide})
+    const ceilingMat=new THREE.MeshStandardMaterial({color:'#f4f1ea',roughness:.95,envMapIntensity:0})
+    const baseboardMat=new THREE.MeshStandardMaterial({color:'#eee9df',roughness:.78,metalness:.01,envMapIntensity:0})
+
+    // 4. Interactive customizable real plain style architectural walls (Zero cross lines)
+    // Footprint: Width 11.58m (X: -5.79 to +5.79), Depth 8.80m (Z: -4.40 to +4.40), Height 3.00m
+    // A) West Wall (wallId: 12)
+    const westWallMat=wallMaterials[12]??wallDefaultMat
+    const westWall=new THREE.Mesh(new THREE.PlaneGeometry(8.80,3.00),westWallMat)
+    westWall.rotation.y=Math.PI/2
+    westWall.position.set(-5.792,F+1.50,0)
+    westWall.receiveShadow=true;westWall.userData.wallId=12;westWall.userData.repeat=6
+    group.add(westWall);wallMeshes.push(westWall)
+
+    // B) East Wall (wallId: 13)
+    const eastWallMat=wallMaterials[13]??wallDefaultMat
+    const eastWall=new THREE.Mesh(new THREE.PlaneGeometry(8.80,3.00),eastWallMat)
+    eastWall.rotation.y=-Math.PI/2
+    eastWall.position.set(5.792,F+1.50,0)
+    eastWall.receiveShadow=true;eastWall.userData.wallId=13;eastWall.userData.repeat=6
+    group.add(eastWall);wallMeshes.push(eastWall)
+
+    // C) North Feature Wall (Kitchen counter wall – wallId: 14)
+    const northWallMat=wallMaterials[14]??wallDefaultMat
+    const northWall=new THREE.Mesh(new THREE.PlaneGeometry(11.60,3.00),northWallMat)
+    northWall.position.set(0,F+1.50,-4.42)
+    northWall.receiveShadow=true;northWall.userData.wallId=14;northWall.userData.repeat=8
+    group.add(northWall);wallMeshes.push(northWall)
+
+    // D) South Wall (Panoramic window wall – wallId: 15)
+    // Modeled with clean planar rectangular sections surrounding the window frame (zero diagonal seams)
+    const southWallMat=wallMaterials[15]??wallDefaultMat
+    // Left of window
+    const sLeft=new THREE.Mesh(new THREE.PlaneGeometry(1.84,3.00),southWallMat)
+    sLeft.rotation.y=Math.PI;sLeft.position.set(-4.87,F+1.50,4.39)
+    sLeft.receiveShadow=true;sLeft.userData.wallId=15;sLeft.userData.repeat=2
+    group.add(sLeft);wallMeshes.push(sLeft)
+
+    // Right of window
+    const sRight=new THREE.Mesh(new THREE.PlaneGeometry(5.25,3.00),southWallMat)
+    sRight.rotation.y=Math.PI;sRight.position.set(3.165,F+1.50,4.39)
+    sRight.receiveShadow=true;sRight.userData.wallId=15;sRight.userData.repeat=4
+    group.add(sRight);wallMeshes.push(sRight)
+
+    // Above window
+    const sTop=new THREE.Mesh(new THREE.PlaneGeometry(4.49,0.30),southWallMat)
+    sTop.rotation.y=Math.PI;sTop.position.set(-1.705,F+2.85,4.39)
+    sTop.userData.wallId=15;group.add(sTop);wallMeshes.push(sTop)
+
+    // Below window
+    const sBtm=new THREE.Mesh(new THREE.PlaneGeometry(4.49,0.30),southWallMat)
+    sBtm.rotation.y=Math.PI;sBtm.position.set(-1.705,F+0.15,4.39)
+    sBtm.receiveShadow=true;sBtm.userData.wallId=15;group.add(sBtm);wallMeshes.push(sBtm)
+
+    // 5. Architectural Perimeter Skirting Boards (Baseboards)
+    const BB_H=0.08,BB_T=0.016,BB_Y=F+BB_H/2
+    const bbN=new THREE.Mesh(new THREE.BoxGeometry(11.60,BB_H,BB_T),baseboardMat)
+    bbN.position.set(0,BB_Y,-4.41+BB_T/2);bbN.receiveShadow=true;group.add(bbN)
+    const bbE=new THREE.Mesh(new THREE.BoxGeometry(BB_T,BB_H,8.80),baseboardMat)
+    bbE.position.set(5.78-BB_T/2,BB_Y,0);bbE.receiveShadow=true;group.add(bbE)
+    const bbW=new THREE.Mesh(new THREE.BoxGeometry(BB_T,BB_H,8.80),baseboardMat)
+    bbW.position.set(-5.78+BB_T/2,BB_Y,0);bbW.receiveShadow=true;group.add(bbW)
+    const bbS1=new THREE.Mesh(new THREE.BoxGeometry(1.84,BB_H,BB_T),baseboardMat)
+    bbS1.position.set(-4.87,BB_Y,4.38-BB_T/2);bbS1.receiveShadow=true;group.add(bbS1)
+    const bbS2=new THREE.Mesh(new THREE.BoxGeometry(5.25,BB_H,BB_T),baseboardMat)
+    bbS2.position.set(3.165,BB_Y,4.38-BB_T/2);bbS2.receiveShadow=true;group.add(bbS2)
+
+    // 6. Clean Architectural Ceiling with Perimeter Tray Soffits
+    const sofN=new THREE.Mesh(new THREE.BoxGeometry(11.60,0.10,0.45),ceilingMat)
+    sofN.position.set(0,F+2.95,-4.20);group.add(sofN)
+    const sofS=new THREE.Mesh(new THREE.BoxGeometry(11.60,0.10,0.45),ceilingMat)
+    sofS.position.set(0,F+2.95,4.18);group.add(sofS)
+    const sofE=new THREE.Mesh(new THREE.BoxGeometry(0.45,0.10,8.00),ceilingMat)
+    sofE.position.set(5.58,F+2.95,0);group.add(sofE)
+    const sofW=new THREE.Mesh(new THREE.BoxGeometry(0.45,0.10,8.00),ceilingMat)
+    sofW.position.set(-5.58,F+2.95,0);group.add(sofW)
+    const ceilCenter=new THREE.Mesh(new THREE.PlaneGeometry(10.70,7.90),ceilingMat)
+    ceilCenter.rotation.x=Math.PI/2;ceilCenter.position.set(0,F+3.00,0);ceilCenter.receiveShadow=true;group.add(ceilCenter)
+
+    // 7. Architectural Bedroom-Style Lighting Rig
+    // A) Window Key Light — warm golden morning sun entering from South window (bias & normalBias tuned for soft shadow edges)
+    const sunKey=new THREE.DirectionalLight('#ffe5b0',1.8)
+    sunKey.position.set(-2.5,F+5.5,9.2);sunKey.target.position.set(-1.2,F+0.8,0);sunKey.castShadow=true
+    sunKey.shadow.mapSize.set(2048,2048);sunKey.shadow.bias=-0.0004;sunKey.shadow.normalBias=0.004
+    sunKey.shadow.camera.left=-6.5;sunKey.shadow.camera.right=6.5;sunKey.shadow.camera.top=5.5;sunKey.shadow.camera.bottom=-5.5
+    group.add(sunKey);group.add(sunKey.target)
+
+    // B) Cool Sky Bounce — subtle directional sky fill, keeps shadow sides dark and realistic
+    const skyFill=new THREE.DirectionalLight('#8aaac4',0.20)
+    skyFill.position.set(5.0,F+4.0,-6.0);group.add(skyFill)
+
+    // C) Ceiling Recessed Focused Spotlights — warm focused downlights over key zones
+    const makeSpot=(x:number,z:number,intensity:number,yTarget:number,color='#ffecd8')=>{
+      const spot=new THREE.SpotLight(color,intensity,5.0,0.42,0.65,1.6)
+      spot.position.set(x,F+2.85,z);spot.target.position.set(x,yTarget,z);spot.castShadow=false
+      group.add(spot);group.add(spot.target)
+    }
+    makeSpot(-2.5,0.5,1.8,F+0.90)    // Over kitchen island
+    makeSpot(-4.5,0.2,1.8,F+0.90)    // Over cooking bench / counter
+    makeSpot(-3.5,-1.8,1.6,F+0.75)   // Over dining table
+    makeSpot(0,0.2,0.22,F+0.10)      // Soft central floor fill - prevents glare blowout
+    makeSpot(2.5,0.0,1.3,F+0.10)     // Over entrance / open floor zone
+
+    // D) Pendant Lamp Practical Warm Glow
+    const pendantLight=new THREE.PointLight('#ffcc88',2.0,3.5,2)
+    pendantLight.position.set(-2.48,F+1.45,0.46);group.add(pendantLight)
+
+    // E) Ceiling Cove Wash
+    const coveWash=new THREE.PointLight('#ffe2b8',0.85,9.0,2)
+    coveWash.position.set(0,F+2.82,0);group.add(coveWash)
+
+    // F) Under-Island Ambient Floor Wash
+    const underIslandGlow=new THREE.PointLight('#ffb85a',0.75,2.5,2)
+    underIslandGlow.position.set(-2.8,F+0.12,0.5);group.add(underIslandGlow)
+
+    // G) Back Counter Wash
+    const counterCove=new THREE.PointLight('#ffd080',1.2,3.0,2)
+    counterCove.position.set(-5.0,F+1.40,0.3);group.add(counterCove)
+
+    // H) Minimal Ambient Fill
+    const ambFill=new THREE.PointLight('#e8d8c8',0.22,12,2)
+    ambFill.position.set(0,F+2.80,0);group.add(ambFill)
+  }
   const makeWallPattern=(style:WallStyle,repeat:number)=>{
     const canvas=document.createElement('canvas');canvas.width=canvas.height=256
     const ctx=canvas.getContext('2d')!;ctx.fillStyle='#fff';ctx.fillRect(0,0,256,256);ctx.strokeStyle='#626a65';ctx.fillStyle='#8e9690';ctx.lineWidth=3
@@ -1005,7 +1350,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     const addWall=(side:number,width:number,x:number,z:number,rotationY:number)=>{
       const id=index*4+side
       const material=new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.84,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1})
-      const customRoom=index===1||index===3,displayWidth=width,displayHeight=3.15
+      const customRoom=index===1||index===3||index===4||index===5,displayWidth=width,displayHeight=3.15
       const wall=new THREE.Mesh(new THREE.PlaneGeometry(displayWidth,displayHeight),material)
       wall.position.set(x,1.68,z);wall.rotation.y=rotationY;wall.visible=!customRoom;wall.userData.wallId=id;wall.userData.repeat=Math.max(2,displayWidth*.72);wallGroup.add(wall);wallMeshes.push(wall);wallMaterials[id]=material
     }
@@ -1013,16 +1358,36 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     addWall(1,entry.walkZ*2,entry.walkX-.045,0,-Math.PI/2)
     addWall(2,entry.walkX*2,0,-entry.walkZ+.045,0)
     addWall(3,entry.walkX*2,0,entry.walkZ-.045,Math.PI)
-    const loadModel=()=>new Promise<void>(resolve=>{const attemptLoad=(attempt:number)=>loader.load(entry.url,gltf=>{
-      if(disposed){gltf.scene.traverse(o=>{if(o instanceof THREE.Mesh)o.geometry.dispose()});resolve();return}
+    const loadModel=()=>new Promise<void>(resolve=>{
+      if(index===5){
+        setupSouthIndianHouse(
+          group,
+          centres[index],
+          floorMeshes,
+          floorMaterials,
+          floorTargets,
+          wallMaterials,
+          wallMeshes,
+          textures,
+          materials,
+          geometries,
+          renderer
+        )
+        resolve()
+        return
+      }
+      const attemptLoad=(attempt:number)=>loader.load(entry.url,async gltf=>{
+      if(disposed){disposeLoadedGltf(gltf);resolve();return}
+      if(index===4)void restoreSpecularGlossiness(gltf).catch(error=>{console.warn('Could not restore the bathroom GLB material maps',error);onAssetError?.('Some Modern Bathroom material maps could not be loaded.')})
       const model=gltf.scene
+      if(index===4)configureBathroomGlass(model)
       // The uploaded GLB is already Y-up; preserve its authored orientation.
       let bounds=new THREE.Box3().setFromObject(model),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3())
       const scale=Math.min(1,entry.maxSpan/Math.max(size.x,size.z),3.45/size.y)
       model.scale.setScalar(scale);model.position.set(-center.x*scale,-bounds.min.y*scale,-center.z*scale)
       group.add(model);group.updateMatrixWorld(true)
       bounds=new THREE.Box3().setFromObject(model);size=bounds.getSize(new THREE.Vector3());center=bounds.getCenter(new THREE.Vector3())
-      if(index===3){
+      if(index===3||index===4){
         // Fit the walking boundary to the measured architectural footprint.
         walkBounds[index]={walkX:Math.max(.8,size.x/2-.12),walkZ:Math.max(.8,size.z/2-.12)}
       }
@@ -1035,71 +1400,249 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       })
       // Generic imported meshes often do not contain "floor" in their name.
       // Sample upward-facing geometry to find the actual walkable surface.
-      const raycaster=new THREE.Raycaster(),down=new THREE.Vector3(0,-1,0),normalMatrix=new THREE.Matrix3()
-      const levels=new Map<number,{count:number,total:number,objects:Set<THREE.Mesh>}>()
-      for(let gx=-4;gx<=4;gx++)for(let gz=-4;gz<=4;gz++){
-        raycaster.set(new THREE.Vector3(entry.walkX*gx/5,5,centres[index]+entry.walkZ*gz/5),down)
-        const candidates=raycaster.intersectObject(model,true).filter(hit=>{
-          if(hit.point.y<-.02||hit.point.y>1.5||!hit.face)return false
-          normalMatrix.getNormalMatrix(hit.object.matrixWorld)
-          return hit.face.normal.clone().applyMatrix3(normalMatrix).normalize().y>.72
-        })
-        if(!candidates.length)continue
-        const floorHit=candidates.reduce((lowest,hit)=>hit.point.y<lowest.point.y?hit:lowest),y=floorHit.point.y,key=Math.round(y/.025)
-        const level=levels.get(key)??{count:0,total:0,objects:new Set<THREE.Mesh>()};level.count++;level.total+=y;level.objects.add(floorHit.object as THREE.Mesh);levels.set(key,level)
-      }
-      const sampled=[...levels.values()].sort((a,b)=>b.count-a.count)[0]
-      if(sampled&&sampled.count>=4)authoredFloorY=Math.max(.045,Math.min(1.5,sampled.total/sampled.count+.045))
-      sampled?.objects.forEach(object=>detectedFloors.add(object))
-      if(index===3){
-        const shellMeshes:THREE.Mesh[]=[]
-        model.traverse(object=>{if(object instanceof THREE.Mesh&&object.name.startsWith('house_'))shellMeshes.push(object)})
-        const project=(point:THREE.Vector3,axis:'floor'|'x-wall'|'z-wall')=>axis==='floor'?[(point.x/0.6),(point.z/0.6)]:axis==='x-wall'?[(point.z/0.6),(point.y/0.3)]:[(point.x/0.6),(point.y/0.3)]
-        for(const source of shellMeshes){
-          const geometry=source.geometry,indexAttribute=geometry.index
-          if(!indexAttribute)continue
-          source.updateWorldMatrix(true,false)
-          const position=geometry.getAttribute('position'),buckets=new Map<string,{indices:number[];kind:'floor'|'wall'|'backsplash';wall:number;axis:'floor'|'x-wall'|'z-wall'}>(),remaining:number[]=[]
-          for(let offset=0;offset<indexAttribute.count;offset+=3){
-            const a=indexAttribute.getX(offset),b=indexAttribute.getX(offset+1),c=indexAttribute.getX(offset+2),pa=new THREE.Vector3().fromBufferAttribute(position,a).applyMatrix4(source.matrixWorld),pb=new THREE.Vector3().fromBufferAttribute(position,b).applyMatrix4(source.matrixWorld),pc=new THREE.Vector3().fromBufferAttribute(position,c).applyMatrix4(source.matrixWorld),normal=pb.clone().sub(pa).cross(pc.clone().sub(pa)).normalize(),center=pa.clone().add(pb).add(pc).multiplyScalar(1/3)
-            let kind:'floor'|'wall'|'backsplash'|null=null,axis:'floor'|'x-wall'|'z-wall'='floor',wall=12
-            if(Math.abs(normal.y)>.78&&center.y<=authoredFloorY+.18)kind='floor'
-            else if(Math.abs(normal.y)<.22&&center.y>authoredFloorY+.22){axis=Math.abs(normal.x)>Math.abs(normal.z)?'x-wall':'z-wall';kind=center.y<authoredFloorY+1.55&&center.y>authoredFloorY+.72?'backsplash':'wall';wall=kind==='backsplash'?16:axis==='x-wall'?(normal.x<0?12:13):(normal.z<0?14:15)}
-            if(!kind){remaining.push(a,b,c);continue}
-            const key=`${kind}:${wall}`,bucket=buckets.get(key)??{indices:[],kind,wall,axis};bucket.indices.push(a,b,c);buckets.set(key,bucket)
-          }
-          if(!buckets.size)continue
-          const rest=geometry.clone();rest.setIndex(remaining);source.geometry=rest;geometries.add(rest)
-        for(const bucket of buckets.values()){
-            const surfaceGeometry=geometry.clone();surfaceGeometry.setIndex(bucket.indices)
-            const worldBounds=new THREE.Box3(),localBounds=new THREE.Box3(),vertexPoint=new THREE.Vector3();for(const vertex of bucket.indices){vertexPoint.fromBufferAttribute(position,vertex);localBounds.expandByPoint(vertexPoint);worldBounds.expandByPoint(vertexPoint.clone().applyMatrix4(source.matrixWorld))}
-            surfaceGeometry.boundingBox=localBounds;surfaceGeometry.boundingSphere=localBounds.getBoundingSphere(new THREE.Sphere())
-            const uv=new Float32Array(position.count*2),point=new THREE.Vector3()
-            for(let vertex=0;vertex<position.count;vertex++){point.fromBufferAttribute(position,vertex).applyMatrix4(source.matrixWorld);const coords=project(point,bucket.axis);uv[vertex*2]=coords[0];uv[vertex*2+1]=coords[1]}
-            surfaceGeometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));surfaceGeometry.computeVertexNormals();geometries.add(surfaceGeometry)
-            let material:THREE.MeshStandardMaterial
-            if(bucket.kind==='floor')material=floorMaterials[index]
-            else{wallMaterials[bucket.wall]??=new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.84,side:THREE.DoubleSide});material=wallMaterials[bucket.wall]}
-            materials.add(material)
-            const surface=new THREE.Mesh(surfaceGeometry,material);surface.name=`Cooking Club ${bucket.kind} ${bucket.wall}`;surface.position.copy(source.position);surface.quaternion.copy(source.quaternion);surface.scale.copy(source.scale);surface.userData.surfaceType=bucket.kind;surface.userData.repeat=1;surface.userData.physicalUV=true;surface.userData.floorRoom=index;surface.userData.floor=bucket.kind==='floor';surface.userData.wallId=bucket.wall;surface.castShadow=false;surface.receiveShadow=true;source.parent?.add(surface)
-            if(bucket.kind==='floor')cookingSurfaces.floor.push(surface)
-            else if(bucket.kind==='backsplash')cookingSurfaces.backsplash.push(surface)
-            else cookingSurfaces.walls.push(surface)
-            if(bucket.kind!=='floor')wallMeshes.push(surface)
-          }
+      if(index!==4){
+        const raycaster=new THREE.Raycaster(),down=new THREE.Vector3(0,-1,0),normalMatrix=new THREE.Matrix3()
+        const levels=new Map<number,{count:number,total:number,objects:Set<THREE.Mesh>}>()
+        for(let gx=-4;gx<=4;gx++)for(let gz=-4;gz<=4;gz++){
+          raycaster.set(new THREE.Vector3(entry.walkX*gx/5,5,centres[index]+entry.walkZ*gz/5),down)
+          const candidates=raycaster.intersectObject(model,true).filter(hit=>{
+            if(hit.point.y<-.02||hit.point.y>1.5||!hit.face)return false
+            normalMatrix.getNormalMatrix(hit.object.matrixWorld)
+            return hit.face.normal.clone().applyMatrix3(normalMatrix).normalize().y>.72
+          })
+          if(!candidates.length)continue
+          const floorHit=candidates.reduce((lowest,hit)=>hit.point.y<lowest.point.y?hit:lowest),y=floorHit.point.y,key=Math.round(y/.025)
+          const level=levels.get(key)??{count:0,total:0,objects:new Set<THREE.Mesh>()};level.count++;level.total+=y;level.objects.add(floorHit.object as THREE.Mesh);levels.set(key,level)
         }
-        cookingSurfaces.walls.concat(cookingSurfaces.backsplash).forEach(mesh=>{const id=mesh.userData.wallId as number;wallMaterials[id]??=mesh.material as THREE.MeshStandardMaterial})
+        const sampled=[...levels.values()].sort((a,b)=>b.count-a.count)[0]
+        if(sampled&&sampled.count>=4)authoredFloorY=Math.max(.045,Math.min(1.5,sampled.total/sampled.count+.045))
+        sampled?.objects.forEach(object=>detectedFloors.add(object))
       }
       floor.position.y=authoredFloorY;wallGroup.position.y=authoredFloorY-.105
       model.traverse(object=>{
         if(!(object instanceof THREE.Mesh))return
         const isBackdrop=/(backdrop|window|glass)/i.test(object.name)
-        object.castShadow=index===3?false:!isBackdrop;object.receiveShadow=true;geometries.add(object.geometry)
+        object.castShadow=index===4?false:!isBackdrop;object.receiveShadow=true;geometries.add(object.geometry)
         const list=Array.isArray(object.material)?object.material:[object.material]
         list.forEach(material=>{materials.add(material);for(const value of Object.values(material))if(value instanceof THREE.Texture)textures.add(value)})
       })
-      const targets=index===3&&cookingSurfaces.floor.length?cookingSurfaces.floor:[...detectedFloors].filter(object=>{const meshBounds=new THREE.Box3().setFromObject(object),meshSize=meshBounds.getSize(new THREE.Vector3());return meshSize.x>.8&&meshSize.z>.8&&meshSize.y<.45})
+      let targets=index===3?[floor]:[...detectedFloors].filter(object=>{const meshBounds=new THREE.Box3().setFromObject(object),meshSize=meshBounds.getSize(new THREE.Vector3());return meshSize.x>.8&&meshSize.z>.8&&meshSize.y<.45})
       floorTargets[index]=targets
+      if(index===4){
+        // The bathroom shell is a single named mesh. Split its triangles using
+        // measured world normals and positions; fixture meshes retain GLB mats.
+        const source=model.getObjectByName('Modern_Bathroom_Structure_0')
+        if(source instanceof THREE.Mesh&&source.geometry.index){
+          source.updateWorldMatrix(true,false)
+          const original=source.geometry,indices=original.index!,position=original.getAttribute('position')
+          const buckets=new Map<string,{indices:number[];kind:'floor'|'wall'|'backsplash';wall:number;axis:'floor'|'x-wall'|'z-wall'}>(),remaining:number[]=[]
+          const project=(point:THREE.Vector3,axis:'floor'|'x-wall'|'z-wall')=>axis==='floor'?[point.x,point.z]:axis==='x-wall'?[point.z,point.y]:[point.x,point.y]
+          let measuredFloor=-Infinity
+          for(let offset=0;offset<indices.count;offset+=3){
+            const ia=indices.getX(offset),ib=indices.getX(offset+1),ic=indices.getX(offset+2)
+            const a=new THREE.Vector3().fromBufferAttribute(position,ia).applyMatrix4(source.matrixWorld),b=new THREE.Vector3().fromBufferAttribute(position,ib).applyMatrix4(source.matrixWorld),c=new THREE.Vector3().fromBufferAttribute(position,ic).applyMatrix4(source.matrixWorld)
+            const normal=b.clone().sub(a).cross(c.clone().sub(a)).normalize(),center=a.clone().add(b).add(c).multiplyScalar(1/3)
+            let kind:'floor'|'wall'|'backsplash'|null=null,axis:'floor'|'x-wall'|'z-wall'='floor',wall=21
+            if(Math.abs(normal.y)>.78&&center.y<authoredFloorY+.2){kind='floor';measuredFloor=Math.max(measuredFloor,center.y)}
+            else if(Math.abs(normal.y)<.22&&center.y>authoredFloorY+.2){
+              axis=Math.abs(normal.x)>Math.abs(normal.z)?'x-wall':'z-wall'
+              const relZ = center.z - centres[index]
+              if (axis === 'x-wall') {
+                kind = (center.x < -1.25 && relZ > 1.85) ? 'backsplash' : 'wall'
+                wall = kind === 'backsplash' ? 20 : (center.x < 0 ? 16 : 17)
+              } else {
+                if (relZ < 0) {
+                  kind = 'wall'
+                  wall = 18 // South wall
+                } else if (relZ > 2.1) {
+                  kind = 'backsplash'
+                  wall = 20 // Shower wall
+                } else {
+                  kind = 'wall'
+                  wall = 19 // North wall
+                }
+              }
+            }
+            if(!kind){remaining.push(ia,ib,ic);continue}
+            const key=`${kind}:${wall}`,bucket=buckets.get(key)??{indices:[],kind,wall,axis};bucket.indices.push(ia,ib,ic);buckets.set(key,bucket)
+          }
+          if(buckets.size){
+            const rest=original.clone();rest.setIndex(remaining);rest.clearGroups();source.geometry=rest;geometries.add(rest)
+            const bathroomFloors:THREE.Mesh[]=[]
+
+            // Triangle clipping for 4 horizontal wall layers (top to bottom)
+            type ClipVertex = { posWorld: THREE.Vector3; uv: THREE.Vector2; posLocal: THREE.Vector3 }
+            const clipPolyY = (verts: ClipVertex[], yVal: number, keepAbove: boolean): ClipVertex[] => {
+              const res: ClipVertex[] = []
+              for (let i = 0; i < verts.length; i++) {
+                const vA = verts[i], vB = verts[(i + 1) % verts.length]
+                const inA = keepAbove ? vA.posWorld.y >= yVal : vA.posWorld.y <= yVal
+                const inB = keepAbove ? vB.posWorld.y >= yVal : vB.posWorld.y <= yVal
+                if (inA) res.push(vA)
+                if (inA !== inB) {
+                  const dy = vB.posWorld.y - vA.posWorld.y
+                  const t = Math.abs(dy) < 1e-7 ? 0 : (yVal - vA.posWorld.y) / dy
+                  const posWorld = vA.posWorld.clone().lerp(vB.posWorld, t)
+                  posWorld.y = yVal
+                  const uv = vA.uv.clone().lerp(vB.uv, t)
+                  const posLocal = vA.posLocal.clone().lerp(vB.posLocal, t)
+                  res.push({ posWorld, uv, posLocal })
+                }
+              }
+              return res
+            }
+
+            for(const bucket of buckets.values()){
+              if(bucket.kind==='floor'){
+                const geometry=original.clone();geometry.setIndex(bucket.indices);geometry.clearGroups()
+                const uv=new Float32Array(position.count*2),point=new THREE.Vector3()
+                for(let vertex=0;vertex<position.count;vertex++){point.fromBufferAttribute(position,vertex).applyMatrix4(source.matrixWorld);const coords=project(point,bucket.axis);uv[vertex*2]=coords[0];uv[vertex*2+1]=coords[1]}
+                geometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));geometry.computeVertexNormals();geometries.add(geometry)
+                const material=floorMaterial;materials.add(material)
+                const surface=new THREE.Mesh(geometry,material);surface.name=`Modern Bathroom floor ${bucket.wall}`;surface.position.copy(source.position);surface.quaternion.copy(source.quaternion);surface.scale.copy(source.scale)
+                surface.userData.surfaceType='floor';surface.userData.repeat=1;surface.userData.physicalUV=true;surface.userData.bathroomMetricUV=true;surface.userData.floorRoom=index;surface.userData.floor=true;surface.userData.wallId=bucket.wall;surface.castShadow=false;surface.receiveShadow=true;source.parent?.add(surface)
+                bathroomFloors.push(surface)
+                continue
+              }
+
+              // Split wall bucket into 4 vertical layers (Top to Bottom: layers 0..3)
+              let yMin = Infinity, yMax = -Infinity
+              for(let idx=0; idx<bucket.indices.length; idx++){
+                const vIdx = bucket.indices[idx]
+                const pW = new THREE.Vector3().fromBufferAttribute(position, vIdx).applyMatrix4(source.matrixWorld)
+                if (pW.y < yMin) yMin = pW.y
+                if (pW.y > yMax) yMax = pW.y
+              }
+
+              const H = yMax - yMin
+              const baseWall = bucket.wall
+
+              for(let layerIdx = 0; layerIdx < 4; layerIdx++) {
+                const layerWallId = baseWall * 10 + layerIdx
+                const yHigh = layerIdx === 0 ? yMax + 0.01 : yMin + (4 - layerIdx) * H / 4
+                const yLow = layerIdx === 3 ? yMin - 0.01 : yMin + (3 - layerIdx) * H / 4
+
+                const layerPositions: number[] = []
+                const layerUvs: number[] = []
+                const layerIndices: number[] = []
+                let vertexCounter = 0
+
+                for(let offset = 0; offset < bucket.indices.length; offset += 3) {
+                  const ia = bucket.indices[offset], ib = bucket.indices[offset+1], ic = bucket.indices[offset+2]
+                  const pLocA = new THREE.Vector3().fromBufferAttribute(position, ia)
+                  const pLocB = new THREE.Vector3().fromBufferAttribute(position, ib)
+                  const pLocC = new THREE.Vector3().fromBufferAttribute(position, ic)
+                  const pWorldA = pLocA.clone().applyMatrix4(source.matrixWorld)
+                  const pWorldB = pLocB.clone().applyMatrix4(source.matrixWorld)
+                  const pWorldC = pLocC.clone().applyMatrix4(source.matrixWorld)
+
+                  const uvA = new THREE.Vector2(...project(pWorldA, bucket.axis))
+                  const uvB = new THREE.Vector2(...project(pWorldB, bucket.axis))
+                  const uvC = new THREE.Vector2(...project(pWorldC, bucket.axis))
+
+                  const vA: ClipVertex = { posWorld: pWorldA, uv: uvA, posLocal: pLocA }
+                  const vB: ClipVertex = { posWorld: pWorldB, uv: uvB, posLocal: pLocB }
+                  const vC: ClipVertex = { posWorld: pWorldC, uv: uvC, posLocal: pLocC }
+
+                  const polyAbove = clipPolyY([vA, vB, vC], yLow, true)
+                  if (polyAbove.length < 3) continue
+                  const polyLayer = clipPolyY(polyAbove, yHigh, false)
+                  if (polyLayer.length < 3) continue
+
+                  for (let i = 1; i < polyLayer.length - 1; i++) {
+                    const tri = [polyLayer[0], polyLayer[i], polyLayer[i + 1]]
+                    for (const vert of tri) {
+                      layerPositions.push(vert.posLocal.x, vert.posLocal.y, vert.posLocal.z)
+                      layerUvs.push(vert.uv.x, vert.uv.y)
+                      layerIndices.push(vertexCounter++)
+                    }
+                  }
+                }
+
+                if (layerPositions.length === 0) continue
+
+                const geometry = new THREE.BufferGeometry()
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(layerPositions, 3))
+                geometry.setAttribute('uv', new THREE.Float32BufferAttribute(layerUvs, 2))
+                geometry.setIndex(layerIndices)
+                geometry.computeVertexNormals()
+                geometries.add(geometry)
+
+                const material = (wallMaterials[layerWallId] ??= new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: .84, side: THREE.DoubleSide }))
+                materials.add(material)
+
+                const surface = new THREE.Mesh(geometry, material)
+                surface.name = `Modern Bathroom wall ${baseWall} layer ${layerIdx}`
+                surface.position.copy(source.position)
+                surface.quaternion.copy(source.quaternion)
+                surface.scale.copy(source.scale)
+                surface.userData.surfaceType = bucket.kind
+                surface.userData.repeat = 1
+                surface.userData.physicalUV = true
+                surface.userData.bathroomMetricUV = true
+                surface.userData.floorRoom = index
+                surface.userData.floor = false
+                surface.userData.wallId = layerWallId
+                surface.userData.baseWall = baseWall
+                surface.userData.layer = layerIdx
+                surface.castShadow = false
+                surface.receiveShadow = true
+                source.parent?.add(surface)
+
+                wallMeshes.push(surface)
+                if (bucket.kind === 'backsplash') cookingSurfaces.backsplash.push(surface)
+
+                const layerList = bathroomSurfaceMap.get(layerWallId) ?? []
+                layerList.push(surface)
+                bathroomSurfaceMap.set(layerWallId, layerList)
+
+                const baseList = bathroomSurfaceMap.get(baseWall) ?? []
+                baseList.push(surface)
+                bathroomSurfaceMap.set(baseWall, baseList)
+
+                if (baseWall === 19 || baseWall === 20) {
+                  const altBaseWall = baseWall === 19 ? 20 : 19
+                  const altLayerWallId = altBaseWall * 10 + layerIdx
+                  const altLayerList = bathroomSurfaceMap.get(altLayerWallId) ?? []
+                  altLayerList.push(surface)
+                  bathroomSurfaceMap.set(altLayerWallId, altLayerList)
+
+                  const altBaseList = bathroomSurfaceMap.get(altBaseWall) ?? []
+                  altBaseList.push(surface)
+                  bathroomSurfaceMap.set(altBaseWall, altBaseList)
+                }
+              }
+            }
+            if(bathroomFloors.length){targets=bathroomFloors;floorTargets[index]=bathroomFloors}
+          }
+          const shellBounds=new THREE.Box3().setFromObject(model)
+          const floorBounds=new THREE.Box3();floorTargets[index].forEach(target=>floorBounds.union(new THREE.Box3().setFromObject(target)))
+          const shellSize=shellBounds.getSize(new THREE.Vector3()),walkSize=floorBounds.isEmpty()?shellSize:floorBounds.getSize(new THREE.Vector3())
+          walkBounds[index]={walkX:Math.max(.8,walkSize.x/2-.12),walkZ:Math.max(.8,walkSize.z/2-.12)}
+          bathroomFloorY=Number.isFinite(measuredFloor)?measuredFloor:(floorBounds.isEmpty()?authoredFloorY:floorBounds.max.y)
+          const fixtureBounds:THREE.Box3[]=[]
+          model.traverse(object=>{if(!(object instanceof THREE.Mesh)||object.userData.surfaceType||object===source)return;if(/(Bath|Toilet|Sink|Shower|Plant)_0/i.test(object.name)){const bounds=new THREE.Box3().setFromObject(object);if(bounds.getSize(new THREE.Vector3()).y>.2)fixtureBounds.push(bounds)}})
+          bathroomObstacles.splice(0,bathroomObstacles.length,...fixtureBounds)
+          let spawn:{x:number;z:number;clearance:number}|null=null
+          const walkArea=floorBounds.isEmpty()?shellBounds:floorBounds,walkCenter=walkArea.getCenter(new THREE.Vector3())
+          const tubBounds=fixtureBounds.find(bounds=>{const dimensions=bounds.getSize(new THREE.Vector3());return dimensions.x>1.6&&dimensions.z>.65&&dimensions.z<1.4&&dimensions.y<1.1})
+          for(let x=walkArea.min.x+.35;x<=walkArea.max.x-.35;x+=.15)for(let z=walkArea.min.z+.35;z<=walkArea.max.z-.35;z+=.15){
+            const occupied=fixtureBounds.some(bounds=>x>bounds.min.x-.3&&x<bounds.max.x+.3&&z>bounds.min.z-.3&&z<bounds.max.z+.3&&bounds.max.y>bathroomFloorY+.1&&bounds.min.y<bathroomFloorY+1.8)
+            if(occupied)continue
+            const clearance=fixtureBounds.reduce((near,bounds)=>Math.min(near,Math.hypot(Math.max(bounds.min.x-x,0,x-bounds.max.x),Math.max(bounds.min.z-z,0,z-bounds.max.z))),1.5),centerDistance=Math.hypot(walkCenter.x-x,walkCenter.z-z)
+            if(!spawn||clearance>spawn.clearance||clearance===spawn.clearance&&centerDistance<Math.hypot(walkCenter.x-spawn.x,walkCenter.z-spawn.z))spawn={x,z,clearance}
+          }
+          const preferredX=tubBounds?Math.min(walkArea.max.x-.4,tubBounds.max.x+.36):walkCenter.x,preferredZ=tubBounds?tubBounds.getCenter(new THREE.Vector3()).z+tubBounds.getSize(new THREE.Vector3()).z*.75:walkCenter.z-Math.min(2,walkSize.z*.28),preferredInBounds=preferredX>walkArea.min.x+.35&&preferredX<walkArea.max.x-.35&&preferredZ>walkArea.min.z+.35&&preferredZ<walkArea.max.z-.35
+          const preferredBlocked=fixtureBounds.some(bounds=>preferredX>bounds.min.x-.3&&preferredX<bounds.max.x+.3&&preferredZ>bounds.min.z-.3&&preferredZ<bounds.max.z+.3&&bounds.max.y>bathroomFloorY+.1&&bounds.min.y<bathroomFloorY+1.8)
+          const viewTarget=new THREE.Vector3(),mainFixtures:THREE.Vector3[]=[]
+          model.traverse(object=>{if(object instanceof THREE.Mesh&&/(?:_Sink_0|_Shower_0)/i.test(object.name))mainFixtures.push(new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3()))})
+          if(mainFixtures.length)viewTarget.copy(mainFixtures.reduce((sum,point)=>sum.add(point),new THREE.Vector3()).multiplyScalar(1/mainFixtures.length));else viewTarget.copy(walkCenter)
+          if(preferredInBounds&&!preferredBlocked)bathroomStart={x:preferredX,z:preferredZ,yaw:Math.atan2(-(viewTarget.x-preferredX),-(viewTarget.z-preferredZ))}
+          else if(spawn) bathroomStart={x:spawn.x,z:spawn.z,yaw:Math.PI}
+          floorPhysicalDimensions[index]={width:walkSize.x,depth:walkSize.z}
+          if(import.meta.env.DEV)console.info('[Modern Bathroom fit]',{size:shellSize.toArray(),walkSize:walkSize.toArray(),floorY:bathroomFloorY,spawn:bathroomStart,surfaces:[...buckets.keys()]})
+        }
+      }
       if(index===3&&targets.length){
         const floorBounds=new THREE.Box3();targets.forEach(target=>floorBounds.union(new THREE.Box3().setFromObject(target)))
         const floorSize=floorBounds.getSize(new THREE.Vector3()),floorCenter=floorBounds.getCenter(new THREE.Vector3())
@@ -1151,7 +1694,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
         const spawn=best??bestSafe??{x:floorCenter.x,z:floorCenter.z}
         kitchenStart={x:spawn.x,z:spawn.z,yaw:Math.atan2(-(target.x-spawn.x),-(target.z-spawn.z))}
       }
-      if(targets.length&&index!==0&&index!==1){targets.forEach(object=>{
+      if(targets.length&&index!==0&&index!==1&&index!==3&&index!==4&&index!==5){targets.forEach(object=>{
         // Imported floors often have missing/degenerate UVs. Project stable UVs
         // from world X/Z so every backend texture is visible at a true scale.
         const source=object.geometry,geometry=source.clone(),position=geometry.getAttribute('position'),bounds=new THREE.Box3().setFromObject(object),size=bounds.getSize(new THREE.Vector3()),point=new THREE.Vector3(),uv=new Float32Array(position.count*2)
@@ -1160,24 +1703,29 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
       });floor.visible=false}
 
       if(index===3){
-        floor.visible=false
-        const kitchenFill=new THREE.PointLight('#fff0d7',3.7,8,2);kitchenFill.position.set(0,2.45,.4);group.add(kitchenFill)
+        setupRealisticCookingClub(group,model,authoredFloorY,floor,floorMaterial,wallMaterials,wallMeshes)
         if(import.meta.env.DEV)console.info('[Cooking Club navigation]',{floorHeight:kitchenFloorY,floorSize:floorPhysicalDimensions[index],walkBoundary:walkBounds[index],walkTriangles:kitchenWalkTriangles.length,colliders:walkObstacleNames})
+      }else if(index===4){
+        const bathFill=new THREE.PointLight('#fff0df',2.2,7,2);bathFill.position.set(0,2.2,centres[index]);group.add(bathFill)
       }else if(index===0){
         setupModernLuxuryLivingRoom(group,model,authoredFloorY,floor,floorMaterial)
       }else if(index===1){
         setupRealisticModernBedroom(group,model,authoredFloorY,floor,floorMaterial,wallMaterials,wallMeshes)
+      }else if(index===5){
+        // Hall & Portico is constructed in loadModel
       }else{
         const fill=new THREE.PointLight('#fff0d7',3.7,8,2);fill.position.set(0,2.45,.4);group.add(fill)
       }
       model.updateMatrixWorld(true)
       resolve()
-    },undefined,error=>{if(disposed){resolve();return}if(attempt<2){window.setTimeout(()=>attemptLoad(attempt+1),1200*(attempt+1));return}console.error(`Could not load ${entry.label} after retries`,error);resolve()});attemptLoad(0)})
+    },undefined,error=>{if(disposed){resolve();return}if(attempt<2){window.setTimeout(()=>attemptLoad(attempt+1),1200*(attempt+1));return}console.error(`Could not load ${entry.label} after retries`,error);onAssetError?.(`${entry.label} could not be loaded. Check the model asset and try again.`);resolve()});attemptLoad(0)})
     modelLoads.push(loadModel)
   })
   // Load one room at a time. This avoids several large GLB/HDR responses
   // competing on the same HTTP/2 connection on hosted storefronts.
-  void (async()=>{for(const index of [3,0,1,2]){if(disposed)break;await modelLoads[index]()}})()
+  void (async()=>{for(const index of [3,0,1,2,5]){if(disposed)break;await modelLoads[index]()}})()
+  let bathroomLoad:Promise<void>|null=null
+  const ensureBathroom=()=>bathroomLoad??(bathroomLoad=modelLoads[4]())
   function updateFloorMaterial(room:number){
     const material=floorMaterials[room]
     if(!material)return
@@ -1203,60 +1751,137 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   }
   function setFloorReflection(factor:number){
     floorReflectionLevel=THREE.MathUtils.clamp(factor,0,1)
-    for(let r=0;r<interiors.length;r++)updateFloorMaterial(r)
+    for(let r=0;r<TOTAL_FLOORS;r++)updateFloorMaterial(r)
   }
   function applyTile(room:number,tile:Tile){
-    const material=floorMaterials[room],entry=interiors[room]
+    const material=floorMaterials[room],entry=interiors[room<interiors.length?room:5]
     if(!material||!entry)return
     floorAppliedTiles[room]=tile
     const request=++floorLoads[room]
-    const {repeatX,repeatY}=getTileRepeats(room,tile)
-    const is2x4=isSlab2x4(tile.size)
-    const groutBump=tile.family!=='Wood'?getGroutBump(is2x4,repeatX,repeatY):null
+    const sizeKey=getSizeVariationKey(tile.size)
+    let {repeatX,repeatY}=getTileRepeats(room,tile)
+    if(floorTargets[room]?.some(mesh=>mesh.userData.bathroomMetricUV)){
+      const dimensions=tile.size.match(/(\d{2,4})\s*[x×]\s*(\d{2,4})/i)
+      const is1x1=isTile1x1(tile.size)
+      const is2x4=isSlab2x4(tile.size)
+      const tileWidth=dimensions?Number(dimensions[1])/1000:(is1x1?.3:tile.family==='Wood'?.45:.6)
+      const tileHeight=dimensions?Number(dimensions[2])/1000:(is1x1?.3:is2x4?1.2:tile.family==='Wood'?1.8:.6)
+      repeatX=1/tileWidth;repeatY=1/tileHeight
+    }
+    const groutBump=tile.family!=='Wood'?getGroutBump(sizeKey,repeatX,repeatY):null
+    const withWhiteBorder=tile.family!=='Wood'
     const scan={diffuse:tile.image,normal:tile.normal,roughness:tile.roughness}
-    void Promise.all([loadTexture(scan.diffuse,repeatX,repeatY,true),scan.normal?loadTexture(scan.normal,repeatX,repeatY):Promise.resolve(null),scan.roughness?loadTexture(scan.roughness,repeatX,repeatY):Promise.resolve(null)]).then(([texture,normal,roughness])=>{
+    void Promise.all([
+      loadTexture(scan.diffuse,repeatX,repeatY,true,tile.orientation??'Landscape',sizeKey,withWhiteBorder),
+      scan.normal?loadTexture(scan.normal,repeatX,repeatY,false,tile.orientation??'Landscape',sizeKey,false):Promise.resolve(null),
+      scan.roughness?loadTexture(scan.roughness,repeatX,repeatY,false,tile.orientation??'Landscape',sizeKey,false):Promise.resolve(null)
+    ]).then(([texture,normal,roughness])=>{
       if(disposed||request!==floorLoads[room]){texture.dispose();normal?.dispose();roughness?.dispose();return}
       floorMaps[room].forEach(map=>map.dispose())
       floorMaps[room]=[texture,...(normal?[normal]:[]),...(roughness?[roughness]:[])]
-      floorMeshes[room].visible=floorTargets[room].length===0||room===0||room===1
+      floorMeshes[room].visible=floorTargets[room]?.length===0||room===0||room===1||room===3||room>=5
       material.color.set('#ffffff');material.map=texture;material.normalMap=normal;material.roughnessMap=roughness
       if(!normal&&groutBump){material.bumpMap=groutBump;material.bumpScale=0.0035}else if(normal){material.bumpMap=null}
       updateFloorMaterial(room)
       if(normal)material.normalScale.set(.62,.62)
-    }).catch(error=>console.error(`Could not load tile ${tile.id}`,error))
+    }).catch(error=>{console.error(`Could not load tile ${tile.id}`,error);onAssetError?.(`${tile.name} could not be loaded on the floor.`)})
   }
   function setWallStyle(wall:number,style:WallStyle){
-    const material=wallMaterials[wall],mesh=wallMeshes.find(item=>item.userData.wallId===wall&&item.userData.surfaceType==='wall')??wallMeshes.find(item=>item.userData.wallId===wall)
-    // Note: we intentionally do NOT skip invisible meshes — the material update
-    // must happen so that the style is live the moment the wall becomes visible.
-    if(!material||!mesh||!/^#[\da-fA-F]{6}$/.test(style.color))return
-    const request=++wallLoads[wall]
-    wallMaps[wall]?.dispose();wallMaps[wall]=undefined;wallDetailMaps[wall].forEach(map=>map.dispose());wallDetailMaps[wall]=[]
-    material.map=null;material.bumpMap=null;material.normalMap=null;material.roughnessMap=null;material.color.set(style.color);material.roughness=.84;material.opacity=1;material.transparent=false;material.depthWrite=true;material.needsUpdate=true
+    if(!style||!/^#[\da-fA-F]{6}$/.test(style.color))return
 
-    if(!style.image&&style.design!=='paint'){
-      const texture=makeWallPattern(style,mesh.userData.repeat);wallMaps[wall]=texture
-      material.map=texture;material.bumpMap=texture;material.bumpScale=.005;material.roughness=.72;material.needsUpdate=true;return
+    const applyToSingle = (wId: number, mesh: THREE.Mesh) => {
+      const material = wallMaterials[wId] ??= new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: .84, side: THREE.DoubleSide })
+      mesh.material = material
+      const request = (wallLoads[wId] = (wallLoads[wId] ?? 0) + 1)
+
+      wallMaps[wId]?.dispose(); wallMaps[wId] = undefined
+      ;(wallDetailMaps[wId] ?? []).forEach(map => map.dispose()); wallDetailMaps[wId] = []
+
+      material.map = null; material.bumpMap = null; material.normalMap = null; material.roughnessMap = null
+      material.color.set(style.color); material.roughness = .84; material.opacity = 1; material.transparent = false; material.depthWrite = true; material.needsUpdate = true
+
+      if (!style.image && style.design !== 'paint') {
+        const texture = makeWallPattern(style, mesh.userData.repeat)
+        wallMaps[wId] = texture
+        material.map = texture; material.bumpMap = texture; material.bumpScale = .005; material.roughness = .72; material.needsUpdate = true; return
+      }
+      if (!style.image) {
+        const bump = makeWallPattern(style, mesh.userData.repeat)
+        wallMaps[wId] = bump
+        material.bumpMap = bump; material.bumpScale = .003; material.roughness = .86; material.needsUpdate = true; return
+      }
+
+      const sizeKey = getSizeVariationKey(style.size)
+      const tileDimensions = style.size?.match(/(\d{2,4})\s*[\u0078\u00D7x×]\s*(\d{2,4})/i)
+      const is1x1 = isTile1x1(style.size)
+      const is2x4 = isSlab2x4(style.size)
+      const isPortrait = style.orientation === 'Portrait'
+      const sideA = tileDimensions ? Number(tileDimensions[1]) / 1000 : (is1x1 ? .3 : .6)
+      const sideB = tileDimensions ? Number(tileDimensions[2]) / 1000 : (is1x1 ? .3 : (is2x4 ? 1.2 : .6))
+      const tileWidth = isPortrait ? Math.min(sideA, sideB) : Math.max(sideA, sideB)
+      const tileHeight = isPortrait ? Math.max(sideA, sideB) : Math.min(sideA, sideB)
+      const baseRepeat = style.repeat ?? mesh.userData.repeat ?? 4
+      const scaleX = is1x1 ? 2 : (is2x4 ? (isPortrait ? 1 : 0.5) : 1)
+      const scaleY = is1x1 ? 2 : (is2x4 ? (isPortrait ? 0.5 : 1) : 1)
+      const repeatX = mesh.userData.bathroomMetricUV ? (1 / tileWidth) : mesh.userData.physicalUV ? 1 : (baseRepeat * scaleX)
+      const repeatY = mesh.userData.bathroomMetricUV ? (1 / tileHeight) : mesh.userData.physicalUV ? 1 : (baseRepeat * scaleY)
+      const orientation = style.orientation ?? 'Landscape'
+
+      void Promise.all([
+        loadTexture(style.image, repeatX, repeatY, true, orientation, sizeKey, true),
+        style.normal ? loadTexture(style.normal, repeatX, repeatY, false, orientation, sizeKey, false) : Promise.resolve(null),
+        style.roughness ? loadTexture(style.roughness, repeatX, repeatY, false, orientation, sizeKey, false) : Promise.resolve(null)
+      ]).then(([texture, normal, roughness]) => {
+        if (disposed || request !== wallLoads[wId]) {
+          texture.dispose(); normal?.dispose(); roughness?.dispose(); return
+        }
+        wallMaps[wId]?.dispose()
+        ;(wallDetailMaps[wId] ?? []).forEach(map => map.dispose())
+        wallMaps[wId] = texture
+        wallDetailMaps[wId] = [...(normal ? [normal] : []), ...(roughness ? [roughness] : [])]
+        for (const map of [texture, normal, roughness]) if (map) {
+          map.wrapS = map.wrapT = THREE.RepeatWrapping
+          map.repeat.set(repeatX, repeatY)
+          map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy())
+        }
+        texture.colorSpace = THREE.SRGBColorSpace
+        material.color.set('#ffffff')
+        material.map = texture
+        material.bumpMap = normal ? null : texture
+        material.bumpScale = .006
+        material.normalMap = normal
+        material.roughnessMap = roughness
+        material.roughness = .62
+        material.opacity = 1
+        material.transparent = false
+        material.depthWrite = true
+        material.needsUpdate = true
+        if (normal) material.normalScale.set(.5, .5)
+      }).catch(error => {
+        console.error(`Could not load wall tile for wall ${wId}`, error)
+        onAssetError?.(`The selected wall tile could not be loaded.`)
+      })
     }
-    if(!style.image){
-      const bump=makeWallPattern(style,mesh.userData.repeat);wallMaps[wall]=bump
-      material.bumpMap=bump;material.bumpScale=.003;material.roughness=.86;material.needsUpdate=true;return
+
+    const targetMeshes = bathroomSurfaceMap.get(wall) ?? wallMeshes.filter(item => item.userData.wallId === wall)
+
+    if (targetMeshes.length > 0) {
+      targetMeshes.forEach(mesh => {
+        const wId = typeof mesh.userData.wallId === 'number' ? mesh.userData.wallId : wall
+        applyToSingle(wId, mesh)
+      })
+    } else {
+      const mesh = wallMeshes.find(item => item.userData.wallId === wall)
+      if (mesh) applyToSingle(wall, mesh)
+      else if (wall === 21) {
+        wallMeshes.filter(item => item.userData.wallId === 14).forEach(m => applyToSingle(14, m))
+      }
     }
-    const repeat=mesh.userData.physicalUV?1:(style.repeat??mesh.userData.repeat)
-    void Promise.all([loadTexture(style.image,repeat,repeat,true),style.normal?loadTexture(style.normal,repeat,repeat):Promise.resolve(null),style.roughness?loadTexture(style.roughness,repeat,repeat):Promise.resolve(null)]).then(([texture,normal,roughness])=>{
-      if(disposed||request!==wallLoads[wall]){texture.dispose();normal?.dispose();roughness?.dispose();return}
-      wallMaps[wall]?.dispose();wallDetailMaps[wall].forEach(map=>map.dispose())
-      wallMaps[wall]=texture;wallDetailMaps[wall]=[...(normal?[normal]:[]),...(roughness?[roughness]:[])]
-      for(const map of [texture,normal,roughness])if(map){map.wrapS=map.wrapT=THREE.RepeatWrapping;map.repeat.set(repeat,repeat);map.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy())}
-      texture.colorSpace=THREE.SRGBColorSpace
-      material.color.set('#ffffff');material.map=texture;material.bumpMap=normal?null:texture;material.bumpScale=.006;material.normalMap=normal;material.roughnessMap=roughness;material.roughness=.62;material.opacity=1;material.transparent=false;material.depthWrite=true;material.needsUpdate=true
-      if(normal)material.normalScale.set(.5,.5)
-    }).catch(error=>console.error(`Could not load wall tile for wall ${wall}`,error))
   }
   function pickSurface(raycaster:THREE.Raycaster){
     const floors=floorTargets.flat().concat(floorMeshes.filter(mesh=>mesh.visible))
     const hit=raycaster.intersectObjects([...wallMeshes.filter(mesh=>mesh.visible),...floors],false)[0]
-    if(hit?.object.userData.surfaceType==='backsplash')return {kind:'backsplash' as const,id:16}
+    if(hit?.object.userData.surfaceType==='backsplash')return {kind:'backsplash' as const,id:hit.object.userData.wallId as number}
     if(hit?.object.userData.floor)return {kind:'floor' as const,id:hit.object.userData.floorRoom as number}
     if(typeof hit?.object.userData.wallId==='number')return {kind:'wall' as const,id:hit.object.userData.wallId as number}
     const floorRoom=hit?.object.userData.floorRoom??hit?.object.userData.room
@@ -1271,7 +1896,11 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
   })}
   function canStand(x:number,z:number){
     const room=importedRoomAt(x,z),bounds=walkBounds[room]
-    if(room!==3)return Math.abs(x)<bounds.walkX&&Math.abs(z-centres[room])<bounds.walkZ
+    if(room!==3){
+      if(Math.abs(x)>=bounds.walkX||Math.abs(z-centres[room])>=bounds.walkZ)return false
+      if(room===4&&bathroomObstacles.some(box=>box.max.y>bathroomFloorY+.12&&box.min.y<bathroomFloorY+1.85&&x>box.min.x-.22&&x<box.max.x+.22&&z>box.min.z-.22&&z<box.max.z+.22))return false
+      return true
+    }
     if(!kitchenWalkTriangles.length){if(Math.abs(x)>=bounds.walkX||Math.abs(z-centres[room])>=bounds.walkZ)return false}
     else if(![[x,z],[x-.22,z],[x+.22,z],[x,z-.22],[x,z+.22]].every(([px,pz])=>pointInKitchenFloor(px!,pz!)))return false
     const radiusSq=.22*.22
@@ -1282,5 +1911,24 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer) {
     })
   }
   function dispose(){disposed=true;geometries.forEach(geometry=>geometry.dispose());materials.forEach(material=>material.dispose());textures.forEach(texture=>texture.dispose());cachedTextures.forEach(texture=>texture.dispose());wallMaps.forEach(texture=>texture?.dispose());wallDetailMaps.forEach(maps=>maps.forEach(texture=>texture.dispose()));floorMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});wallMeshes.forEach(mesh=>{mesh.geometry.dispose();(mesh.material as THREE.Material).dispose()});environment?.dispose()}
-  return {scene,applyTile,setWallStyle,pickSurface,canStand,floorMeshes,setFloorReflection,getKitchenStart:()=>kitchenStart,getKitchenFloorHeight:()=>kitchenFloorY,getKitchenNavigation:()=>({floorHeight:kitchenFloorY,floorSize:floorPhysicalDimensions[3],walkBoundary:walkBounds[3],colliders:walkObstacleNames}),dispose}
+  function getBathroomPreviewView(surface:'Wall'|'Floor'){
+    const floorBounds=new THREE.Box3();floorTargets[4].forEach(mesh=>floorBounds.union(new THREE.Box3().setFromObject(mesh)))
+    if(floorBounds.isEmpty())return bathroomStart?{...bathroomStart,pitch:0,cameraHeight:1.65}:null
+    if(surface==='Floor'){
+      const center=floorBounds.getCenter(new THREE.Vector3()),size=floorBounds.getSize(new THREE.Vector3()),cameraHeight=THREE.MathUtils.clamp(Math.max(size.x,size.z)*.52,2,2.8),z=center.z+Math.min(size.z*.2,.7),horizontal=Math.abs(z-center.z)
+      return {x:center.x,z,yaw:0,pitch:-Math.atan2(cameraHeight,horizontal),cameraHeight}
+    }
+    const walls=[...bathroomSurfaceMap.entries()].filter(([id])=>id>=16&&id<=19).flatMap(([id,meshes])=>meshes.map(mesh=>({id,mesh,bounds:new THREE.Box3().setFromObject(mesh)}))).filter(item=>!item.bounds.isEmpty()).sort((a,b)=>{
+      const aSize=a.bounds.getSize(new THREE.Vector3()),bSize=b.bounds.getSize(new THREE.Vector3())
+      return bSize.x*bSize.y+bSize.z*bSize.y-(aSize.x*aSize.y+aSize.z*aSize.y)
+    })
+    const chosen=walls[0]
+    if(!chosen)return bathroomStart?{...bathroomStart,pitch:0,cameraHeight:1.65}:null
+    const target=chosen.bounds.getCenter(new THREE.Vector3()),roomCenter=floorBounds.getCenter(new THREE.Vector3()),inward=new THREE.Vector3(roomCenter.x-target.x,0,roomCenter.z-target.z).normalize()
+    if(inward.lengthSq()<.5)inward.set(0,0,-1)
+    const horizontalDistance=THREE.MathUtils.clamp(Math.min(chosen.bounds.getSize(new THREE.Vector3()).x,chosen.bounds.getSize(new THREE.Vector3()).z)*.38,1.25,2.1)
+    const x=target.x+inward.x*horizontalDistance,z=target.z+inward.z*horizontalDistance,dx=target.x-x,dz=target.z-z,dy=target.y-(bathroomFloorY+1.65),horizontal=Math.hypot(dx,dz)
+    return {x,z,yaw:Math.atan2(-dx,-dz),pitch:Math.atan2(dy,horizontal),cameraHeight:1.65,wallId:chosen.id}
+  }
+  return {scene,applyTile,setWallStyle,pickSurface,canStand,floorMeshes,setFloorReflection,loadRoom:(room:number)=>room===4?ensureBathroom():(modelLoads[room]?modelLoads[room]():Promise.resolve()),getKitchenStart:()=>kitchenStart,getKitchenFloorHeight:()=>kitchenFloorY,getBathroomStart:()=>bathroomStart,getBathroomPreviewView,getBathroomFloorHeight:()=>bathroomFloorY,getKitchenNavigation:()=>({floorHeight:kitchenFloorY,floorSize:floorPhysicalDimensions[3],walkBoundary:walkBounds[3],colliders:walkObstacleNames}),dispose}
 }

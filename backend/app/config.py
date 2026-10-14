@@ -29,3 +29,11 @@ VR_TELEPORT_ENABLED = env_flag("VR_TELEPORT_ENABLED", True)
 VR_DEFAULT_MOVEMENT_SPEED = float(os.getenv("VR_DEFAULT_MOVEMENT_SPEED", "2.4"))
 VR_ROOM_SCALE = float(os.getenv("VR_ROOM_SCALE", "1.0"))
 VR_ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv("VR_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+
+# Explore & Admin Credentials (kept strictly in backend .env)
+EXPLORE_USERNAME = os.getenv("EXPLORE_USERNAME", "mjp_explore").strip().lower()
+EXPLORE_PASSWORD = os.getenv("EXPLORE_PASSWORD", "tiles3d")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin@admin.com").strip().lower()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
+EXPLORE_SESSION_EXPIRY_HOURS = float(os.getenv("EXPLORE_SESSION_EXPIRY_HOURS", "1.0"))
+

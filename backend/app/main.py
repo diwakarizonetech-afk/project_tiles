@@ -9,11 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .config import ALLOWED_IMAGE_TYPES, CATALOG_DIR, CORS_ORIGINS, MAX_UPLOAD_BYTES, UPLOAD_DIR, VR_ALLOWED_ORIGINS, VR_DEFAULT_MOVEMENT_SPEED, VR_ENABLED, VR_REQUIRE_HTTPS, VR_ROOM_SCALE, VR_TELEPORT_ENABLED
-from .database import Base, engine, get_db
+from .config import ALLOWED_IMAGE_TYPES, CATALOG_DIR, CORS_ORIGINS, MAX_UPLOAD_BYTES, UPLOAD_DIR, VR_ALLOWED_ORIGINS, VR_DEFAULT_MOVEMENT_SPEED, VR_ENABLED, VR_REQUIRE_HTTPS, VR_ROOM_SCALE, VR_TELEPORT_ENABLED, EXPLORE_USERNAME, EXPLORE_PASSWORD, ADMIN_USERNAME, ADMIN_PASSWORD, EXPLORE_SESSION_EXPIRY_HOURS
 from .database import Base, engine, get_db
 from .models import TileDesign, Inquiry
-from .schemas import TileDesignOut, VrSettingsOut, InquiryIn, InquiryOut
+from .schemas import TileDesignOut, VrSettingsOut, InquiryIn, InquiryOut, ExploreLoginIn, ExploreLoginOut
 
 CODE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9-]{2,24}$")
 FAMILIES = {"Marble", "Stone", "Terrazzo", "Wood", "Pattern"}
@@ -35,7 +34,7 @@ app.mount("/catalog", StaticFiles(directory=CATALOG_DIR), name="catalog")
 
 def serialize(design: TileDesign, request: Request) -> TileDesignOut:
     base=str(request.base_url).rstrip("/")
-    return TileDesignOut(code=design.code,name=design.name,family=design.family,finish=design.finish,surface=design.surface,image_url=base+design.image_path,color=design.color,vein=design.vein,size=design.size,normal_url=base+design.normal_path if design.normal_path else None,roughness_url=base+design.roughness_path if design.roughness_path else None,texture_repeat=design.texture_repeat,sort_order=design.sort_order,built_in=design.built_in,created_at=design.created_at)
+    return TileDesignOut(code=design.code,name=design.name,family=design.family,finish=design.finish,surface=design.surface,orientation=design.orientation or "Landscape",image_url=base+design.image_path,color=design.color,vein=design.vein,size=design.size,normal_url=base+design.normal_path if design.normal_path else None,roughness_url=base+design.roughness_path if design.roughness_path else None,texture_repeat=design.texture_repeat,sort_order=design.sort_order,built_in=design.built_in,created_at=design.created_at)
 
 @app.get("/api/health")
 def health():
@@ -77,6 +76,7 @@ async def create_tile_design(
     family: str = Form(...),
     finish: str = Form("Matt"),
     surface: str = Form("Both"),
+    orientation: str = Form("Landscape"),
     size: str = Form("2' × 2' (600 × 600 mm)"),
     image: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -86,6 +86,10 @@ async def create_tile_design(
         raise HTTPException(status_code=422, detail="Tile code must contain 3-25 uppercase letters, numbers or hyphens.")
     if family not in FAMILIES or surface not in SURFACES:
         raise HTTPException(status_code=422, detail="Invalid family or surface type.")
+    if orientation not in {"Landscape", "Portrait"}:
+        raise HTTPException(status_code=422, detail="Orientation must be Landscape or Portrait.")
+    if surface != "Wall":
+        orientation = "Landscape"
     extension = ALLOWED_IMAGE_TYPES.get(image.content_type or "")
     if not extension:
         raise HTTPException(status_code=415, detail="Use a JPG, PNG or WebP texture image.")
@@ -102,6 +106,7 @@ async def create_tile_design(
         existing.family = family
         existing.finish = finish.strip() or "Matt"
         existing.surface = surface
+        existing.orientation = orientation
         existing.size = normalized_size
         existing.image_path = f"/api/tile-designs/{code}/image"
         existing.image_data = payload
@@ -111,7 +116,7 @@ async def create_tile_design(
         if legacy_image:
             legacy_image.unlink(missing_ok=True)
         return serialize(existing, request)
-    design = TileDesign(code=code,name=name.strip(),family=family,finish=finish.strip() or "Matt",surface=surface,image_path=f"/api/tile-designs/{code}/image",image_data=payload,image_content_type=image.content_type,color="#d8d4cb",vein="#7e786f",size=normalized_size,texture_repeat=2.5,sort_order=1000,built_in=False)
+    design = TileDesign(code=code,name=name.strip(),family=family,finish=finish.strip() or "Matt",surface=surface,orientation=orientation,image_path=f"/api/tile-designs/{code}/image",image_data=payload,image_content_type=image.content_type,color="#d8d4cb",vein="#7e786f",size=normalized_size,texture_repeat=2.5,sort_order=1000,built_in=False)
     db.add(design)
     try:
         db.commit()
@@ -150,4 +155,23 @@ def create_inquiry(inquiry_in: InquiryIn, db: Session = Depends(get_db)):
 def list_inquiries(db: Session = Depends(get_db)):
     inquiries = db.scalars(select(Inquiry).order_by(Inquiry.created_at.desc())).all()
     return inquiries
+
+@app.post("/api/auth/explore", response_model=ExploreLoginOut)
+def explore_login(credentials: ExploreLoginIn):
+    user = credentials.username.strip().lower()
+    pw = credentials.password.strip()
+    is_explore = (user == EXPLORE_USERNAME and pw == EXPLORE_PASSWORD)
+    is_admin = (user == ADMIN_USERNAME and pw == ADMIN_PASSWORD)
+    if not (is_explore or is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password. Please verify your credentials."
+        )
+    return ExploreLoginOut(
+        success=True,
+        role="admin" if is_admin else "explore",
+        expires_in_hours=EXPLORE_SESSION_EXPIRY_HOURS,
+        message="Showroom session unlocked."
+    )
+
 

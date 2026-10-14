@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 class VrSettingsOut(BaseModel):
@@ -16,6 +17,7 @@ class TileDesignOut(BaseModel):
     family: str
     finish: str
     surface: str
+    orientation: Literal["Landscape", "Portrait"] = "Landscape"
     image_url: str
     color: str
     vein: str
@@ -39,3 +41,14 @@ class InquiryOut(BaseModel):
     contact: str
     message: str
     created_at: datetime
+
+class ExploreLoginIn(BaseModel):
+    username: str
+    password: str
+
+class ExploreLoginOut(BaseModel):
+    success: bool
+    role: str
+    expires_in_hours: float
+    message: str
+
