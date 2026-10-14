@@ -41,3 +41,14 @@ class InquiryOut(BaseModel):
     contact: str
     message: str
     created_at: datetime
+
+class ExploreLoginIn(BaseModel):
+    username: str
+    password: str
+
+class ExploreLoginOut(BaseModel):
+    success: bool
+    role: str
+    expires_in_hours: float
+    message: str
+

@@ -9,11 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .config import ALLOWED_IMAGE_TYPES, CATALOG_DIR, CORS_ORIGINS, MAX_UPLOAD_BYTES, UPLOAD_DIR, VR_ALLOWED_ORIGINS, VR_DEFAULT_MOVEMENT_SPEED, VR_ENABLED, VR_REQUIRE_HTTPS, VR_ROOM_SCALE, VR_TELEPORT_ENABLED
-from .database import Base, engine, get_db
+from .config import ALLOWED_IMAGE_TYPES, CATALOG_DIR, CORS_ORIGINS, MAX_UPLOAD_BYTES, UPLOAD_DIR, VR_ALLOWED_ORIGINS, VR_DEFAULT_MOVEMENT_SPEED, VR_ENABLED, VR_REQUIRE_HTTPS, VR_ROOM_SCALE, VR_TELEPORT_ENABLED, EXPLORE_USERNAME, EXPLORE_PASSWORD, ADMIN_USERNAME, ADMIN_PASSWORD, EXPLORE_SESSION_EXPIRY_HOURS
 from .database import Base, engine, get_db
 from .models import TileDesign, Inquiry
-from .schemas import TileDesignOut, VrSettingsOut, InquiryIn, InquiryOut
+from .schemas import TileDesignOut, VrSettingsOut, InquiryIn, InquiryOut, ExploreLoginIn, ExploreLoginOut
 
 CODE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9-]{2,24}$")
 FAMILIES = {"Marble", "Stone", "Terrazzo", "Wood", "Pattern"}
@@ -156,4 +155,23 @@ def create_inquiry(inquiry_in: InquiryIn, db: Session = Depends(get_db)):
 def list_inquiries(db: Session = Depends(get_db)):
     inquiries = db.scalars(select(Inquiry).order_by(Inquiry.created_at.desc())).all()
     return inquiries
+
+@app.post("/api/auth/explore", response_model=ExploreLoginOut)
+def explore_login(credentials: ExploreLoginIn):
+    user = credentials.username.strip().lower()
+    pw = credentials.password.strip()
+    is_explore = (user == EXPLORE_USERNAME and pw == EXPLORE_PASSWORD)
+    is_admin = (user == ADMIN_USERNAME and pw == ADMIN_PASSWORD)
+    if not (is_explore or is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password. Please verify your credentials."
+        )
+    return ExploreLoginOut(
+        success=True,
+        role="admin" if is_admin else "explore",
+        expires_in_hours=EXPLORE_SESSION_EXPIRY_HOURS,
+        message="Showroom session unlocked."
+    )
+
 
