@@ -97,7 +97,13 @@ async def create_tile_design(
     payload = await image.read()
     if not payload or len(payload) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Image must be between 1 byte and 5 MB.")
-    normalized_size = "2' × 4' (600 × 1200 mm)" if ("2x4" in size or "1200" in size or "4" in size) else "2' × 2' (600 × 600 mm)"
+    if "1.5" in size or "450" in size or "1x1.5" in size:
+        normalized_size = "1' × 1.5' (300 × 450 mm)"
+        orientation = "Landscape"  # 1x1.5 ft tiles are horizontal only
+    elif "2x4" in size or "1200" in size or "4" in size:
+        normalized_size = "2' × 4' (600 × 1200 mm)"
+    else:
+        normalized_size = "2' × 2' (600 × 600 mm)"
     existing = db.get(TileDesign, code)
     if existing:
         if existing.built_in:

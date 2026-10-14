@@ -13,17 +13,17 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "tile_designs",
-        sa.Column("orientation", sa.String(length=10), server_default="Landscape", nullable=False),
-    )
-    op.create_check_constraint(
-        "ck_tile_designs_orientation",
-        "tile_designs",
-        "orientation IN ('Landscape', 'Portrait')",
-    )
+    with op.batch_alter_table("tile_designs", schema=None) as batch_op:
+        batch_op.add_column(
+            sa.Column("orientation", sa.String(length=10), server_default="Landscape", nullable=False)
+        )
+        batch_op.create_check_constraint(
+            "ck_tile_designs_orientation",
+            "orientation IN ('Landscape', 'Portrait')",
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_tile_designs_orientation", "tile_designs", type_="check")
-    op.drop_column("tile_designs", "orientation")
+    with op.batch_alter_table("tile_designs", schema=None) as batch_op:
+        batch_op.drop_constraint("ck_tile_designs_orientation", type_="check")
+        batch_op.drop_column("orientation")

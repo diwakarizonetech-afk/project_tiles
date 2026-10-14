@@ -1240,7 +1240,7 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
                 continue
               }
 
-              // Split wall bucket into 4 vertical layers (Top to Bottom: layers 0..3)
+              // Measure wall bucket bounds in world coordinates
               let yMin = Infinity, yMax = -Infinity
               for(let idx=0; idx<bucket.indices.length; idx++){
                 const vIdx = bucket.indices[idx]
@@ -1249,13 +1249,17 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
                 if (pW.y > yMax) yMax = pW.y
               }
 
-              const H = yMax - yMin
+              // Set bathroom wall height to 7 ft (2.1336m) above wall base, divided into 7 sections
+              const wallHeight7ft = 2.1336
+              const wallBottomY = yMin
+              const wallTopY = Math.min(yMax, yMin + wallHeight7ft)
               const baseWall = bucket.wall
 
-              for(let layerIdx = 0; layerIdx < 4; layerIdx++) {
+              for(let layerIdx = 0; layerIdx < 7; layerIdx++) {
                 const layerWallId = baseWall * 10 + layerIdx
-                const yHigh = layerIdx === 0 ? yMax + 0.01 : yMin + (4 - layerIdx) * H / 4
-                const yLow = layerIdx === 3 ? yMin - 0.01 : yMin + (3 - layerIdx) * H / 4
+                // Layer 0 is top section (7/7 to 6/7), Layer 6 is bottom section (1/7 to 0/7)
+                const yHigh = layerIdx === 0 ? wallTopY + 0.01 : wallBottomY + (7 - layerIdx) * wallHeight7ft / 7
+                const yLow = layerIdx === 6 ? wallBottomY - 0.01 : wallBottomY + (6 - layerIdx) * wallHeight7ft / 7
 
                 const layerPositions: number[] = []
                 const layerUvs: number[] = []
@@ -1494,7 +1498,22 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
     const request=++floorLoads[room]
     let {repeatX,repeatY}=getTileRepeats(room,tile)
     if(floorTargets[room].some(mesh=>mesh.userData.bathroomMetricUV)){
-      const dimensions=tile.size.match(/(\d{2,4})\s*[x×]\s*(\d{2,4})/i),tileWidth=dimensions?Number(dimensions[1])/1000:tile.family==='Wood'?.45:.6,tileHeight=dimensions?Number(dimensions[2])/1000:tile.family==='Wood'?1.8:.6
+      const is1x1_5 = Boolean(tile.size && /1['’]?\s*[x×]\s*1\.5|300\s*[x×]\s*450/i.test(tile.size))
+      const is2x2 = Boolean(tile.size && /2['’]?\s*[x×]\s*2|600\s*[x×]\s*600/i.test(tile.size))
+      let tileWidth = 0.60
+      let tileHeight = 0.60
+      if (is1x1_5) {
+        // Horizontal placement: 1.5ft width (0.4572m) x 1ft height (0.3048m)
+        tileWidth = 0.4572
+        tileHeight = 0.3048
+      } else if (is2x2) {
+        tileWidth = 0.60
+        tileHeight = 0.60
+      } else {
+        const dimensions=tile.size.match(/(\d{2,4})\s*[x×]\s*(\d{2,4})/i)
+        tileWidth=dimensions?Number(dimensions[1])/1000:tile.family==='Wood'?.45:.6
+        tileHeight=dimensions?Number(dimensions[2])/1000:tile.family==='Wood'?1.8:.6
+      }
       repeatX=1/tileWidth;repeatY=1/tileHeight
     }
     const is2x4=isSlab2x4(tile.size)
@@ -1536,14 +1555,36 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
         material.bumpMap = bump; material.bumpScale = .003; material.roughness = .86; material.needsUpdate = true; return
       }
 
-      const tileDimensions = style.size?.match(/(\d{2,4})\s*[\u0078\u00D7x×]\s*(\d{2,4})/i)
-      const sideA = tileDimensions ? Number(tileDimensions[1]) / 1000 : .6
-      const sideB = tileDimensions ? Number(tileDimensions[2]) / 1000 : .6
-      const tileWidth = style.orientation === 'Portrait' ? Math.min(sideA, sideB) : Math.max(sideA, sideB)
-      const tileHeight = style.orientation === 'Portrait' ? Math.max(sideA, sideB) : Math.min(sideA, sideB)
-      const repeatX = mesh.userData.bathroomMetricUV ? (style.orientation === 'Portrait' ? 1 / tileHeight : 1 / tileWidth) : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
-      const repeatY = mesh.userData.bathroomMetricUV ? (style.orientation === 'Portrait' ? 1 / tileWidth : 1 / tileHeight) : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
-      const orientation = style.orientation ?? 'Landscape'
+      const isTile1x1_5 = Boolean(style.size && /1['’]?\s*[x×]\s*1\.5|300\s*[x×]\s*450/i.test(style.size))
+      const isTile2x2 = Boolean(style.size && /2['’]?\s*[x×]\s*2|600\s*[x×]\s*600/i.test(style.size))
+      let sideWidth = 0.60
+      let sideHeight = 0.60
+
+      if (isTile1x1_5) {
+        // 1x1.5 ft (300 x 450 mm) tile: strictly horizontal placement only (width = 1.5ft = 0.4572m, height = 1ft = 0.3048m)
+        sideWidth = 0.4572
+        sideHeight = 0.3048
+      } else if (isTile2x2) {
+        // 2x2 ft (600 x 600 mm) tile: selectable horizontal or vertical placement
+        sideWidth = 0.60
+        sideHeight = 0.60
+      } else {
+        const tileDimensions = style.size?.match(/(\d{2,4})\s*[\u0078\u00D7x×]\s*(\d{2,4})/i)
+        const dimA = tileDimensions ? Number(tileDimensions[1]) / 1000 : .60
+        const dimB = tileDimensions ? Number(tileDimensions[2]) / 1000 : .60
+        sideWidth = Math.max(dimA, dimB)
+        sideHeight = Math.min(dimA, dimB)
+      }
+
+      // For 1x1.5 ft tiles, force horizontal only (Landscape).
+      // For 2x2 ft or other tiles, support selectable Landscape (horizontal) or Portrait (vertical).
+      const effectiveOrientation = isTile1x1_5 ? 'Landscape' : (style.orientation ?? 'Landscape')
+      const tileW = effectiveOrientation === 'Portrait' ? sideHeight : sideWidth
+      const tileH = effectiveOrientation === 'Portrait' ? sideWidth : sideHeight
+
+      const repeatX = mesh.userData.bathroomMetricUV ? 1 / tileW : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
+      const repeatY = mesh.userData.bathroomMetricUV ? 1 / tileH : mesh.userData.physicalUV ? 1 : (style.repeat ?? mesh.userData.repeat)
+      const orientation = effectiveOrientation
 
       void Promise.all([
         loadTexture(style.image, repeatX, repeatY, true, orientation),

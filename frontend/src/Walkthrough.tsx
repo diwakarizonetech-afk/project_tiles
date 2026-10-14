@@ -108,11 +108,10 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
         const rect=renderer.domElement.getBoundingClientRect()
         surfaceRay.setFromCamera(new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-((event.clientY-rect.top)/rect.height*2-1)),camera)
         const hit=house.pickSurface(surfaceRay)
-        if((hit?.kind==='wall'||hit?.kind==='backsplash')&&typeof hit?.id==='number'&&hit.id>=160&&hit.id<=203){
+        if((hit?.kind==='wall'||hit?.kind==='backsplash')&&typeof hit?.id==='number'&&hit.id>=160&&hit.id<=206){
           const baseWall=Math.floor(hit.id/10), layer=hit.id%10
           const baseLabel=(baseWall===19||baseWall===20)?'North / Shower wall':['West wall','East wall','South wall','North wall'][baseWall%4]
-          const layerLabels=['Top layer','Upper-Mid layer','Lower-Mid layer','Bottom layer']
-          setHoverHint(`✨ Click to customise Modern Bathroom · ${baseLabel} (${layerLabels[layer]})`)
+          setHoverHint(`✨ Click to customise Modern Bathroom · ${baseLabel} (Section ${layer+1} of 7)`)
           renderer.domElement.style.cursor='pointer'
         } else if(hit?.kind==='backsplash'){
           setHoverHint('Click to customize the kitchen backsplash')
