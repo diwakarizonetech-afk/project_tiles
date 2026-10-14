@@ -4,7 +4,7 @@ import './graphics-fallback.css'
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Maximize2, RotateCcw } from 'lucide-react'
 import type { WallStyle } from './house'
 import { buildImportedHouse, importedRoomAt as roomAt, importedViewpoints as viewpoints } from './importedHouse'
-import { roomNames, sampleUrl, type Tile } from './catalog'
+import { houseEntranceWallNames, roomNames, sampleUrl, type Tile } from './catalog'
 
 export type ViewHandle = { enter:()=>void; goTo:(room:number)=>void; reset:()=>void; enterVR:()=>Promise<void>; fullscreen:()=>void }
 type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:Record<number, WallStyle> | WallStyle[]; walking:boolean; stereo:boolean; gyro:boolean; brightness:number; floorGlare:number; initialRoom?:number; previewMode?:boolean; previewSurface?:'Wall'|'Floor'; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onFloorPick:(room:number)=>void; onWalking:(active:boolean)=>void; onGyro:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
@@ -54,7 +54,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     const camera=new THREE.PerspectiveCamera(60,1,.07,140);const rig=new THREE.Group();rig.add(camera);house.scene.add(rig);camera.rotation.order='YXZ'
     const stereoCamera=new THREE.StereoCamera();stereoCamera.eyeSep=.064
     const keys=new Set<string>();let pitch=-.14,last=0,uiTime=0,previousRoom=-1,disposed=false,width=1,height=1,kitchenSpawnApplied=false;let dragging=false,oldX=0,oldY=0
-    let bathroomSpawnApplied=false
+    let bathroomSpawnApplied=false,cozySpawnApplied=false
     const applyPreviewWallStyle=()=>{
       const focus=house.getBathroomPreviewView(live.current.previewSurface??'Wall')
       const stylesList=Array.isArray(live.current.wallStyles)?live.current.wallStyles.slice(16,21):Object.entries(live.current.wallStyles).filter(([k])=>Number(k)>=16&&Number(k)<=20).map(([,v])=>v)
@@ -63,14 +63,17 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     }
     const goTo=(i:number)=>{
       if(i===4)void house.loadRoom(4)
-      const kitchen=i===3?house.getKitchenStart():null,bathroom=i===4?house.getBathroomStart():null
+      if(i===5)void house.loadRoom(5)
+      if(i===0)void house.loadRoom(0)
+      const cozy=i===0?house.getCozyStart():null,kitchen=i===3?house.getKitchenStart():null,bathroom=i===4?house.getBathroomStart():null
       const focused=i===4&&live.current.previewMode?house.getBathroomPreviewView(live.current.previewSurface??'Wall'):null
-      const p=focused??kitchen??bathroom??viewpoints[i]
-      const floorY=kitchen?house.getKitchenFloorHeight():bathroom||focused?house.getBathroomFloorHeight():0
+      const p=focused??cozy??kitchen??bathroom??viewpoints[i]
+      const floorY=cozy?house.getCozyFloorHeight():kitchen?house.getKitchenFloorHeight():bathroom||focused?house.getBathroomFloorHeight():i===5?house.getHouseEntranceFloorHeight():0
       rig.position.set(p.x,floorY,p.z)
       rig.rotation.y=p.yaw
       pitch=focused?focused.pitch:kitchen||bathroom?0:viewpoints[i].pitch
       if(kitchen)kitchenSpawnApplied=true
+      if(cozy)cozySpawnApplied=true
       if(bathroom&&!bathroomSpawnApplied){
         if(live.current.previewMode)applyPreviewWallStyle()
         else Object.entries(live.current.wallStyles).forEach(([w,s])=>house.setWallStyle(Number(w),s))
@@ -79,7 +82,8 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
         bathroomSpawnApplied=true
       }
       if(!renderer.xr.isPresenting){
-        camera.position.set(0,focused?.cameraHeight??1.65,0)
+        camera.fov=i===5?48:60;camera.updateProjectionMatrix()
+        camera.position.set(0,focused?.cameraHeight??(i===5?2.2:1.65),0)
         camera.rotation.set(pitch,0,0)
       }
       live.current.onRoom(i)
@@ -110,7 +114,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
         const hit=house.pickSurface(surfaceRay)
         if((hit?.kind==='wall'||hit?.kind==='backsplash')&&typeof hit?.id==='number'&&hit.id>=160&&hit.id<=206){
           const baseWall=Math.floor(hit.id/10), layer=hit.id%10
-          const baseLabel=(baseWall===19||baseWall===20)?'North / Shower wall':['West wall','East wall','South wall','North wall'][baseWall%4]
+          const baseLabel=baseWall===20?'Shower wall':['West wall','East wall','South wall','North wall'][baseWall%4]
           setHoverHint(`✨ Click to customise Modern Bathroom · ${baseLabel} (Section ${layer+1} of 7)`)
           renderer.domElement.style.cursor='pointer'
         } else if(hit?.kind==='backsplash'){
@@ -165,6 +169,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
     }
     renderer.setAnimationLoop((time)=>{
       if(disposed||renderer.getContext().isContextLost()||document.hidden)return;const dt=Math.min((time-last)/1000,.033);last=time;renderer.toneMappingExposure=live.current.brightness
+      if(!cozySpawnApplied&&roomAt(rig.position.x,rig.position.z)===0&&house.getCozyStart())goTo(0)
       if(!kitchenSpawnApplied&&roomAt(rig.position.x,rig.position.z)===3&&house.getKitchenStart())goTo(3)
       if(!bathroomSpawnApplied&&roomAt(rig.position.x,rig.position.z)===4&&house.getBathroomStart())goTo(4)
       if(live.current.walking&&!document.querySelector('[role="dialog"]'))move((keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0)+movement.current.x,(keys.has('KeyS')||keys.has('ArrowDown')?1:0)-(keys.has('KeyW')||keys.has('ArrowUp')?1:0)+movement.current.z,dt)

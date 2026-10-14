@@ -37,4 +37,5 @@ export type Tile={id:string;name:string;family:Family;color:string;vein:string;f
 
 export const families:Family[]=['Granite','Marble','Stone','Terrazzo','Wood','Pattern']
 export const roomNames=['Cozy Living Room','Modern Bedroom','VR Gallery','Cooking Club','Modern Bathroom']
+export const houseEntranceWallNames=['West exterior','East exterior','Rear exterior','Front entry facade','Hall partition','Parking divider']
 export const sampleUrl=(tile:Tile)=>tile.image

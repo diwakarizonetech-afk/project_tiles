@@ -16,8 +16,8 @@ function AdminTilePreview({tile,tiles,onExit}:{tile:Tile;tiles:Tile[];onExit:()=
   const [walking,setWalking]=useState(false);
   const [ready,setReady]=useState(false),[error,setError]=useState('');
   const floorFallback=tiles.find(item=>item.surface==='Floor'||item.surface==='Both');
-  const selected=useMemo(()=>Array.from({length:roomNames.length},(_,room)=>room===4&&surface==='Floor'?tile:floorFallback??tile),[tile,surface,floorFallback]);
-  const wallStyles=useMemo<WallStyle[]>(()=>Array.from({length:roomNames.length*4+2},(_,index)=>index>=16&&index<=20&&surface==='Wall'?{
+  const selected=useMemo(()=>Array.from({length:roomNames.length},(_,room)=>(room===4||room===5)&&surface==='Floor'?tile:floorFallback??tile),[tile,surface,floorFallback]);
+  const wallStyles=useMemo<WallStyle[]>(()=>Array.from({length:roomNames.length*4+10},(_,index)=>(index>=16&&index<=20||index>=24&&index<=29)&&surface==='Wall'?{
     color:'#ffffff',design:'paint',image:tile.image,normal:tile.normal,roughness:tile.roughness,repeat:tile.repeat,size:tile.size,orientation:tile.orientation??'Landscape'
   }:{color:'#f0ece6',design:'paint'}),[tile,surface]);
   useEffect(()=>{view.current?.reset()},[surface]);
