@@ -7,7 +7,7 @@ import { buildImportedHouse, importedRoomAt as roomAt, importedViewpoints as vie
 import { houseEntranceWallNames, roomNames, sampleUrl, type Tile } from './catalog'
 
 export type ViewHandle = { enter:()=>void; goTo:(room:number)=>void; reset:()=>void; enterVR:()=>Promise<void>; fullscreen:()=>void }
-type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:Record<number, WallStyle> | WallStyle[]; walking:boolean; stereo:boolean; gyro:boolean; brightness:number; floorGlare:number; initialRoom?:number; previewMode?:boolean; previewSurface?:'Wall'|'Floor'; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onFloorPick:(room:number)=>void; onWalking:(active:boolean)=>void; onGyro:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
+type Props = { onBrowse:()=>void; selected:Tile[]; wallStyles:Record<number, WallStyle> | WallStyle[]; walking:boolean; stereo:boolean; gyro:boolean; brightness:number; floorGlare:number; initialRoom?:number; previewMode?:boolean; previewSurface?:'Wall'|'Floor'; paused?:boolean; onRoom:(room:number)=>void; onWallPick:(wall:number)=>void; onFloorPick:(room:number)=>void; onWalking:(active:boolean)=>void; onGyro:(active:boolean)=>void; onNotice:(text:string)=>void; onReady:()=>void; onXR:(active:boolean)=>void }
 type Runtime = { goTo:(room:number)=>void; reset:()=>void; enter:()=>void; vr:()=>Promise<void>; apply:(room:number,tile:Tile)=>void; styleWall:(wall:number,style:WallStyle)=>void; previewView:(surface:'Wall'|'Floor')=>{x:number;z:number;yaw:number;pitch:number;cameraHeight:number;wallId?:number}|null; setFloorReflection:(f:number)=>void; renderer:THREE.WebGLRenderer }
 
 export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props,ref){
@@ -68,7 +68,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
       const cozy=i===0?house.getCozyStart():null,kitchen=i===3?house.getKitchenStart():null,bathroom=i===4?house.getBathroomStart():null
       const focused=i===4&&live.current.previewMode?house.getBathroomPreviewView(live.current.previewSurface??'Wall'):null
       const p=focused??cozy??kitchen??bathroom??viewpoints[i]
-      const floorY=cozy?house.getCozyFloorHeight():kitchen?house.getKitchenFloorHeight():bathroom||focused?house.getBathroomFloorHeight():i===5?house.getHouseEntranceFloorHeight():0
+      const floorY=cozy?house.getCozyFloorHeight():kitchen?house.getKitchenFloorHeight():bathroom||focused?house.getBathroomFloorHeight():i===5?(house.getHouseEntranceFloorHeight?.()??0.35):0
       rig.position.set(p.x,floorY,p.z)
       rig.rotation.y=p.yaw
       pitch=focused?focused.pitch:kitchen||bathroom?0:viewpoints[i].pitch
@@ -126,7 +126,11 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
           setHoverHint(`✨ Click to customise ${roomNames[r]} · ${sideName}`)
           renderer.domElement.style.cursor='pointer'
         } else if(hit?.kind==='floor'){
-          setHoverHint(`✨ Click to change ${roomNames[hit.id]} floor tile`)
+          if(hit.id===5)setHoverHint('✨ Click to change Hall floor tile')
+          else if(hit.id===6)setHoverHint('✨ Click to change Entrance floor tile')
+          else if(hit.id===7)setHoverHint('✨ Click to change Car parking floor tile')
+          else if(hit.id===8)setHoverHint('✨ Click to change Portico floor tile')
+          else setHoverHint(`✨ Click to change ${roomNames[hit.id]} floor tile`)
           renderer.domElement.style.cursor='pointer'
         } else {
           setHoverHint('')
@@ -168,7 +172,7 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
       }
     }
     renderer.setAnimationLoop((time)=>{
-      if(disposed||renderer.getContext().isContextLost()||document.hidden)return;const dt=Math.min((time-last)/1000,.033);last=time;renderer.toneMappingExposure=live.current.brightness
+      if(disposed||renderer.getContext().isContextLost()||document.hidden||live.current.paused)return;const dt=Math.min((time-last)/1000,.033);last=time;renderer.toneMappingExposure=live.current.brightness
       if(!cozySpawnApplied&&roomAt(rig.position.x,rig.position.z)===0&&house.getCozyStart())goTo(0)
       if(!kitchenSpawnApplied&&roomAt(rig.position.x,rig.position.z)===3&&house.getKitchenStart())goTo(3)
       if(!bathroomSpawnApplied&&roomAt(rig.position.x,rig.position.z)===4&&house.getBathroomStart())goTo(4)
@@ -204,7 +208,6 @@ export const Walkthrough=forwardRef<ViewHandle,Props>(function Walkthrough(props
   useEffect(()=>{runtime.current?.setFloorReflection(props.floorGlare)},[props.floorGlare])
   const hold=(x:number,z:number)=>({onPointerDown:(event:React.PointerEvent<HTMLButtonElement>)=>{event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);movement.current={x,z}},onPointerUp:()=>{movement.current={x:0,z:0}},onPointerCancel:()=>{movement.current={x:0,z:0}},onLostPointerCapture:()=>{movement.current={x:0,z:0}}})
   return <><div className="three-host" ref={host}/>{error&&<div className="graphics-error material-fallback" role="status">{props.previewMode?<div className="fallback-copy"><p>SHOWROOM PREVIEW</p><h2>3D preview unavailable</h2><p>{error}</p></div>:<><div className="fallback-sample"><img src={sampleUrl(props.selected[roomAt(position.x,position.z)])} alt="Selected tile texture preview"/><span>2D MATERIAL PREVIEW</span></div><div className="fallback-copy"><p>MJP CERAMICS / MATERIAL STUDIO</p><h2>Your next favourite surface.</h2><p>3D is temporarily unavailable on this device. You can still explore tile designs and upload your own.</p><strong>{props.selected[roomAt(position.x,position.z)].name}</strong><div className="fallback-actions"><button onClick={props.onBrowse}>Explore tile collections</button><button onClick={()=>setAttempt(n=>n+1)}>Try 3D again</button></div><small>For 3D, enable browser graphics acceleration and close unused 3D tabs.</small></div></>}</div>}
-    {!props.previewMode&&!error&&<div className="floorplan" aria-label={`Your location: ${roomNames[roomAt(position.x,position.z)]}`}><span>THE INTERIORS</span><svg viewBox="0 0 160 160" role="img" aria-label="Imported interior selector">{roomNames.map((label,i)=><g key={label}><rect x={i%2?83:5} y={9+Math.floor(i/2)*36} width="72" height="27" rx="2" fill={roomAt(position.x,position.z)===i?'#d9c28a':'#f5f0e5'} stroke="#8c887f"/><text x={i%2?119:41} y={26+Math.floor(i/2)*36}>{String(i+1).padStart(2,'0')}</text></g>)}</svg><small>{roomNames[roomAt(position.x,position.z)]}</small></div>}
     {!props.previewMode&&hoverHint&&!props.stereo&&<div className="surface-hover-hint" role="status">{hoverHint}</div>}
     {props.walking&&<>{!props.previewMode&&<span className="crosshair" aria-hidden="true">+</span>}{!props.previewMode&&<div className="walk-help">{locked?'W A S D to walk · Mouse to look · Esc to release':'Drag to look · W A S D / arrows to walk'}<button aria-label="Reset room viewpoint" onClick={()=>runtime.current?.reset()}><RotateCcw size={15}/></button></div>}<div className="move-pad" aria-label="Movement controls"><button className="forward" aria-label="Walk forward" {...hold(0,-1)}><ArrowUp/></button><button aria-label="Walk left" {...hold(-1,0)}><ArrowLeft/></button><button aria-label="Walk backward" {...hold(0,1)}><ArrowDown/></button><button aria-label="Walk right" {...hold(1,0)}><ArrowRight/></button></div></>}
     {props.stereo&&<div className="stereo-divider"><span>STEREO PREVIEW</span></div>}
