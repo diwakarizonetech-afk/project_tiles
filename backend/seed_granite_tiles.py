@@ -1,4 +1,4 @@
-"""Import only the 14 original granite tiles from the catalog into PostgreSQL.
+"""Import strictly the 14 original granite tiles from the catalog PDF into PostgreSQL.
 
 Run from ``backend`` with ``python seed_granite_tiles.py``.
 Removes all legacy and variation tiles, keeping strictly the 14 authentic granite designs.
@@ -6,6 +6,7 @@ Removes all legacy and variation tiles, keeping strictly the 14 authentic granit
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import shutil
@@ -13,12 +14,13 @@ import sys
 from pathlib import Path
 from PIL import Image
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 
 from app.config import CATALOG_DIR
 from app.database import SessionLocal
 from app.models import TileDesign
 
+DEFAULT_PDF = Path(r"C:\Users\IZONE 171\Downloads\GRANITE NEW (1).pdf")
 DEFAULT_SOURCE = Path(__file__).resolve().parent / "catalog" / "granite_tiles_clean_no_white_borders"
 
 PAGE_NAMES = [
@@ -37,6 +39,42 @@ PAGE_NAMES = [
     "Granite Brown",
     "Granite Ocean",
 ]
+
+# Exact crop box for the large granite tile on the left (calibrated from 4169x3508 brochure page)
+TILE_CROP_BOX = (247, 138, 1749, 3148)
+
+
+def extract_tiles_from_pdf(pdf_path: Path, destination_folder: Path) -> list[Path]:
+    """Extract and crop the 14 authentic large granite tiles directly from the PDF."""
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        import fitz  # type: ignore
+
+    if not pdf_path.is_file():
+        raise SystemExit(f"PDF file does not exist: {pdf_path}")
+
+    destination_folder.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open(pdf_path)
+    cropped_paths: list[Path] = []
+
+    print(f"Opening PDF: {pdf_path.name} ({len(doc)} pages)")
+    for i in range(min(len(doc), len(PAGE_NAMES))):
+        page = doc[i]
+        img_list = page.get_images()
+        if not img_list:
+            print(f"Warning: No images on page {i+1}", file=sys.stderr)
+            continue
+        xref = img_list[0][0]
+        base_img = doc.extract_image(xref)
+        with Image.open(io.BytesIO(base_img["image"])) as im:
+            tile = im.crop(TILE_CROP_BOX)
+            out_file = destination_folder / f"page_{i+1:02d}_tile_large.jpg"
+            tile.save(out_file, "JPEG", quality=95)
+            cropped_paths.append(out_file)
+            print(f"Extracted Page {i+1:02d}: {PAGE_NAMES[i]} -> {out_file.name} ({tile.size[0]}x{tile.size[1]})")
+
+    return cropped_paths
 
 
 def clear_all_tiles() -> None:
@@ -59,7 +97,6 @@ def compute_colors(image_path: Path) -> tuple[str, str]:
     try:
         with Image.open(image_path) as im:
             im = im.resize((50, 100)).convert("RGB")
-            # Flattened data or simple pixel iteration
             pixels = [im.getpixel((x, y)) for y in range(im.height) for x in range(im.width)]
             r_avg = sum(p[0] for p in pixels) // len(pixels)
             g_avg = sum(p[1] for p in pixels) // len(pixels)
@@ -75,7 +112,6 @@ def compute_colors(image_path: Path) -> tuple[str, str]:
 def discover(source: Path) -> list[Path]:
     if not source.is_dir():
         raise SystemExit(f"Image folder does not exist: {source}")
-    # Only pick the 14 main large tiles
     valid = []
     for i in range(1, len(PAGE_NAMES) + 1):
         target = source / f"page_{i:02d}_tile_large.jpg"
@@ -97,7 +133,6 @@ def product_code(image: Path) -> str:
 
 
 def cleanup_small_images(source: Path) -> None:
-    # Remove small variations so only the 14 large files remain
     removed = 0
     for small_file in source.glob("*_small_*.jpg"):
         try:
@@ -128,22 +163,28 @@ def main() -> None:
         clear_all_tiles()
         return
 
-    source = Path(sys.argv[1]).expanduser().resolve() if len(sys.argv) > 1 else DEFAULT_SOURCE.resolve()
-    
-    # 1. Clean up small images from source folder
-    cleanup_small_images(source)
-
-    # 2. Discover exactly the 14 main tiles
-    images = discover(source)
-    codes = [product_code(image) for image in images]
-
-    # 3. Clear database to ensure only the 14 tiles exist
-    clear_all_tiles()
-
-    CATALOG_DIR.mkdir(parents=True, exist_ok=True)
     destination_folder = CATALOG_DIR / "granite_tiles_clean_no_white_borders"
     destination_folder.mkdir(parents=True, exist_ok=True)
     cleanup_small_images(destination_folder)
+
+    # Determine input source: PDF file or directory
+    arg_source = Path(sys.argv[1]).expanduser().resolve() if len(sys.argv) > 1 else None
+
+    if arg_source and arg_source.is_file() and arg_source.suffix.lower() == ".pdf":
+        images = extract_tiles_from_pdf(arg_source, destination_folder)
+    elif arg_source and arg_source.is_dir():
+        cleanup_small_images(arg_source)
+        images = discover(arg_source)
+    elif DEFAULT_PDF.is_file():
+        images = extract_tiles_from_pdf(DEFAULT_PDF, destination_folder)
+    else:
+        cleanup_small_images(DEFAULT_SOURCE)
+        images = discover(DEFAULT_SOURCE)
+
+    codes = [product_code(image) for image in images]
+
+    # Clear all old tiles from database to keep strictly the 14 original tiles
+    clear_all_tiles()
 
     exported_fallback_tiles = []
 
@@ -197,9 +238,9 @@ def main() -> None:
 
         db.commit()
 
-    print(f"Total tiles in catalog: {len(images)}")
+    print(f"\nSuccessfully seeded {len(images)} granite tiles into PostgreSQL database:")
     for item in exported_fallback_tiles:
-        print(f"  {item['id']}: {item['name']}")
+        print(f"  {item['id']}: {item['name']} ({item['color']} / {item['vein']})")
     
     sync_frontend_fallback(exported_fallback_tiles)
 

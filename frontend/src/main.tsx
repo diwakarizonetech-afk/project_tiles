@@ -138,7 +138,7 @@ function SelectedTileCard({
   const displayColor = getTileDisplayColor(tile)
   const displayCategory = getTileDisplayCategory(tile)
   const currentOrientation = tile.orientation ?? 'Landscape'
-  const showOrientationOption = Boolean(isWall && currentSizeKey === '4x2')
+  const showOrientationOption = currentSizeKey === '4x2'
 
   return (
     <div className="selected-tile-card" role="region" aria-label="Selected tile preview and details">
@@ -464,6 +464,9 @@ function App(){
         }
       }
       setApplied(`${activeWallTile.name} wall layout updated to ${orientation === 'Portrait' ? 'Vertical' : 'Horizontal'}`)
+    } else {
+      setSelected(previous => previous.map((old, i) => (scope === 'all' || (room === 5 ? i === activeSouthIndianFloor : i === currentFloorIndex)) ? { ...old, orientation } : old))
+      setApplied(`${activeSelectedTile?.name ?? 'Tile'} floor layout updated to ${orientation === 'Portrait' ? 'Vertical' : 'Horizontal'}`)
     }
   }
   const useOnWall=(value:Tile, orientationOverride?:TileOrientation)=>{

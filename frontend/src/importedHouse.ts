@@ -81,17 +81,62 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
     canvas.height = targetH
 
     const targetAspect = targetW / targetH
-    const srcAspect = srcW / srcH
-    let cropX = 0, cropY = 0, cropW = srcW, cropH = srcH
-    if (srcAspect > targetAspect) {
-      cropW = srcH * targetAspect
-      cropX = (srcW - cropW) / 2
-    } else {
-      cropH = srcW / targetAspect
-      cropY = (srcH - cropH) / 2
-    }
+    const isSourcePortrait = srcW < srcH
+    const isTargetLandscape = targetW > targetH
 
-    ctx.drawImage(sourceImg, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH)
+    if (isSourcePortrait && isTargetLandscape) {
+      // Source is vertical portrait slab (1:2), target is horizontal (2:1).
+      // Rotate 90 degrees so the entire slab is preserved without cropping!
+      const rotCanvas = document.createElement('canvas')
+      rotCanvas.width = srcH
+      rotCanvas.height = srcW
+      const rctx = rotCanvas.getContext('2d')!
+      rctx.translate(srcH / 2, srcW / 2)
+      rctx.rotate(Math.PI / 2)
+      rctx.drawImage(sourceImg as any, -srcW / 2, -srcH / 2, srcW, srcH)
+
+      const rotAspect = rotCanvas.width / rotCanvas.height
+      let cropX = 0, cropY = 0, cropW = rotCanvas.width, cropH = rotCanvas.height
+      if (rotAspect > targetAspect) {
+        cropW = rotCanvas.height * targetAspect
+        cropX = (rotCanvas.width - cropW) / 2
+      } else {
+        cropH = rotCanvas.width / targetAspect
+        cropY = (rotCanvas.height - cropH) / 2
+      }
+      ctx.drawImage(rotCanvas, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH)
+    } else if (!isSourcePortrait && !isTargetLandscape && sizeKey === '4x2') {
+      // Source is horizontal (2:1), target is vertical (1:2).
+      const rotCanvas = document.createElement('canvas')
+      rotCanvas.width = srcH
+      rotCanvas.height = srcW
+      const rctx = rotCanvas.getContext('2d')!
+      rctx.translate(srcH / 2, srcW / 2)
+      rctx.rotate(Math.PI / 2)
+      rctx.drawImage(sourceImg as any, -srcW / 2, -srcH / 2, srcW, srcH)
+
+      const rotAspect = rotCanvas.width / rotCanvas.height
+      let cropX = 0, cropY = 0, cropW = rotCanvas.width, cropH = rotCanvas.height
+      if (rotAspect > targetAspect) {
+        cropW = rotCanvas.height * targetAspect
+        cropX = (rotCanvas.width - cropW) / 2
+      } else {
+        cropH = rotCanvas.width / targetAspect
+        cropY = (rotCanvas.height - cropH) / 2
+      }
+      ctx.drawImage(rotCanvas, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH)
+    } else {
+      const srcAspect = srcW / srcH
+      let cropX = 0, cropY = 0, cropW = srcW, cropH = srcH
+      if (srcAspect > targetAspect) {
+        cropW = srcH * targetAspect
+        cropX = (srcW - cropW) / 2
+      } else {
+        cropH = srcW / targetAspect
+        cropY = (srcH - cropH) / 2
+      }
+      ctx.drawImage(sourceImg as any, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH)
+    }
 
     // White borders matching the tile size
     const borderHalf = sizeKey === '1x1' ? 4 : (sizeKey === '2x2' ? 5 : 6)
@@ -289,7 +334,10 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
     const is2x4=isSlab2x4(tile.size)
     if(is2x4){
       // 2' x 4' / 4' x 2' (600 x 1200 mm) Large Format Slab
-      return {repeatX:Math.max(1,Math.round(dims.width/0.60*10)/10),repeatY:Math.max(1,Math.round(dims.depth/1.20*10)/10)}
+      const isPortrait = tile.orientation === 'Portrait'
+      const tileW = isPortrait ? 0.60 : 1.20
+      const tileH = isPortrait ? 1.20 : 0.60
+      return {repeatX:Math.max(1,Math.round(dims.width/tileW*10)/10),repeatY:Math.max(1,Math.round(dims.depth/tileH*10)/10)}
     }
     const is1x2=isTile1x2(tile.size)
     if(is1x2){
@@ -300,12 +348,13 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
     return {repeatX:Math.max(1,Math.round(dims.width/0.60*10)/10),repeatY:Math.max(1,Math.round(dims.depth/0.60*10)/10)}
   }
   const groutBumpCache=new Map<string,THREE.Texture>()
-  const getGroutBump=(sizeKey:'4x2'|'2x2'|'1x1'|'1x2',repX:number,repY:number)=>{
-    const key=`${sizeKey}|${repX}|${repY}`
+  const getGroutBump=(sizeKey:'4x2'|'2x2'|'1x1'|'1x2',repX:number,repY:number,orientation:Tile['orientation']='Landscape')=>{
+    const key=`${sizeKey}|${repX}|${repY}|${orientation}`
     const existing=groutBumpCache.get(key)
     if(existing)return existing
-    const w=sizeKey==='1x2'?256:(sizeKey==='4x2'?512:512)
-    const h=sizeKey==='4x2'?1024:512
+    const isPortrait = orientation === 'Portrait'
+    const w = sizeKey === '1x2' ? (isPortrait ? 256 : 512) : (sizeKey === '4x2' ? (isPortrait ? 512 : 1024) : 512)
+    const h = sizeKey === '1x2' ? (isPortrait ? 512 : 256) : (sizeKey === '4x2' ? (isPortrait ? 1024 : 512) : 512)
     const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h
     const ctx=canvas.getContext('2d')!
     ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h)
@@ -2085,7 +2134,8 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
     const request=++floorLoads[room]
     const sizeKey=getSizeVariationKey(tile.size)
     let {repeatX,repeatY}=getTileRepeats(room,tile)
-    if(floorTargets[room]?.some(mesh=>mesh.userData.bathroomMetricUV)||(room===0||room===5)&&floorTargets[room]?.some(mesh=>mesh.userData.physicalUV)){
+    const hasPhysicalUV = floorTargets[room]?.some(mesh=>mesh.userData.bathroomMetricUV || mesh.userData.physicalUV) || (room >= 0 && room <= 8)
+    if(hasPhysicalUV){
       const is1x1_5 = Boolean(tile.size && /1['’]?\s*[x×]\s*1\.5|300\s*[x×]\s*450/i.test(tile.size))
       const is2x2 = Boolean(tile.size && /2['’]?\s*[x×]\s*2|600\s*[x×]\s*600/i.test(tile.size))
       const is1x1 = isTile1x1(tile.size)
@@ -2102,8 +2152,9 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
         tileWidth = 0.30
         tileHeight = 0.30
       } else if (is2x4) {
-        tileWidth = 0.60
-        tileHeight = 1.20
+        const isPortrait = tile.orientation === 'Portrait'
+        tileWidth = isPortrait ? 0.60 : 1.20
+        tileHeight = isPortrait ? 1.20 : 0.60
       } else {
         const dimensions=tile.size.match(/(\d{2,4})\s*[x×]\s*(\d{2,4})/i)
         tileWidth=dimensions?Number(dimensions[1])/1000:tile.family==='Wood'?.45:.6
@@ -2111,13 +2162,14 @@ export function buildImportedHouse(renderer:THREE.WebGLRenderer,onAssetError?:(m
       }
       repeatX=1/tileWidth;repeatY=1/tileHeight
     }
-    const groutBump=tile.family!=='Wood'?getGroutBump(sizeKey,repeatX,repeatY):null
+    const effectiveOrientation = tile.orientation ?? 'Landscape'
+    const groutBump=tile.family!=='Wood'?getGroutBump(sizeKey,repeatX,repeatY,effectiveOrientation):null
     const withWhiteBorder=tile.family!=='Wood'
     const scan={diffuse:tile.image,normal:tile.normal,roughness:tile.roughness}
     void Promise.all([
-      loadTexture(scan.diffuse,repeatX,repeatY,true,tile.orientation??'Landscape',sizeKey,withWhiteBorder),
-      scan.normal?loadTexture(scan.normal,repeatX,repeatY,false,tile.orientation??'Landscape',sizeKey,false):Promise.resolve(null),
-      scan.roughness?loadTexture(scan.roughness,repeatX,repeatY,false,tile.orientation??'Landscape',sizeKey,false):Promise.resolve(null)
+      loadTexture(scan.diffuse,repeatX,repeatY,true,effectiveOrientation,sizeKey,withWhiteBorder),
+      scan.normal?loadTexture(scan.normal,repeatX,repeatY,false,effectiveOrientation,sizeKey,false):Promise.resolve(null),
+      scan.roughness?loadTexture(scan.roughness,repeatX,repeatY,false,effectiveOrientation,sizeKey,false):Promise.resolve(null)
     ]).then(([texture,normal,roughness])=>{
       if(disposed||request!==floorLoads[room]){texture.dispose();normal?.dispose();roughness?.dispose();return}
       floorMaps[room].forEach(map=>map.dispose())
