@@ -5,3 +5,4 @@ psycopg[binary]==3.2.5
 python-multipart==0.0.20
 alembic==1.15.2
 python-dotenv==1.0.1
+Pillow>=10.0.0

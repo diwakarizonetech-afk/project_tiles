@@ -12,7 +12,10 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 from sqlalchemy import delete
 
@@ -78,10 +81,13 @@ def extract_tiles_from_pdf(pdf_path: Path, destination_folder: Path) -> list[Pat
 
 
 def clear_all_tiles() -> None:
-    with SessionLocal() as db:
-        res = db.execute(delete(TileDesign))
-        db.commit()
-        print(f"Cleared {res.rowcount} tiles from the catalog database.")
+    try:
+        with SessionLocal() as db:
+            res = db.execute(delete(TileDesign))
+            db.commit()
+            print(f"Cleared {res.rowcount} tiles from the catalog database.")
+    except Exception as e:
+        print(f"Notice: clear_all_tiles skipped or table not initialized yet: {e}")
 
 
 def get_tile_name(filename: str) -> str:
