@@ -37,3 +37,17 @@ export async function fetchInquiries() {
   if (!res.ok) throw new Error('Failed to fetch inquiries');
   return res.json();
 }
+
+export async function verifyExploreCredentials(username: string, password: string): Promise<{ success: boolean; role: string; expires_in_hours: number; message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/explore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail ?? 'Invalid username or password.');
+  }
+  return res.json();
+}
+

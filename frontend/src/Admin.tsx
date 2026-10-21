@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
-import { useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Trash2, Upload, LogIn, Grid, Settings, Home, LogOut, Mail, Phone, MessageSquare, Clock, ArrowLeft, RotateCcw, Expand, Footprints } from 'lucide-react';
-import { fetchTiles, deleteCustomTile, saveCustomTile, fetchInquiries } from './api';
-import { type Tile, families, TILE_SIZES, roomNames, type Family, type SurfaceUse, type TileSize, type TileOrientation } from './catalog';
+import { fetchTiles, deleteCustomTile, saveCustomTile, fetchInquiries, verifyExploreCredentials } from './api';
+
+
+
+import { type Tile, families, formatTileSizeLabel, TILE_SIZES, roomNames, type Family, type SurfaceUse, type TileSize, type TileOrientation } from './catalog';
 import { Walkthrough, type ViewHandle } from './Walkthrough';
 import type { WallStyle } from './house';
 import './tailwind.css';
@@ -16,8 +18,8 @@ function AdminTilePreview({tile,tiles,onExit}:{tile:Tile;tiles:Tile[];onExit:()=
   const [walking,setWalking]=useState(false);
   const [ready,setReady]=useState(false),[error,setError]=useState('');
   const floorFallback=tiles.find(item=>item.surface==='Floor'||item.surface==='Both');
-  const selected=useMemo(()=>Array.from({length:roomNames.length},(_,room)=>room===4&&surface==='Floor'?tile:floorFallback??tile),[tile,surface,floorFallback]);
-  const wallStyles=useMemo<WallStyle[]>(()=>Array.from({length:roomNames.length*4+2},(_,index)=>index>=16&&index<=20&&surface==='Wall'?{
+  const selected=useMemo(()=>Array.from({length:roomNames.length},(_,room)=>(room===4||room===5)&&surface==='Floor'?tile:floorFallback??tile),[tile,surface,floorFallback]);
+  const wallStyles=useMemo<WallStyle[]>(()=>Array.from({length:roomNames.length*4+10},(_,index)=>(index>=16&&index<=20||index>=24&&index<=29)&&surface==='Wall'?{
     color:'#ffffff',design:'paint',image:tile.image,normal:tile.normal,roughness:tile.roughness,repeat:tile.repeat,size:tile.size,orientation:tile.orientation??'Landscape'
   }:{color:'#f0ece6',design:'paint'}),[tile,surface]);
   useEffect(()=>{view.current?.reset()},[surface]);
@@ -38,7 +40,14 @@ function AdminTilePreview({tile,tiles,onExit}:{tile:Tile;tiles:Tile[];onExit:()=
             <button type="button" aria-pressed={walking} onClick={()=>{if(!walking)view.current?.enter();else setWalking(false)}} className="flex items-center gap-2 rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow hover:bg-white"><Footprints size={15}/> {walking?'Stop walking':'Walk'}</button>
             <button type="button" onClick={()=>view.current?.fullscreen()} className="flex items-center gap-2 rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow hover:bg-white"><Expand size={15}/> Fullscreen</button>
           </div>
-          {tile.surface==='Both'&&<label className="absolute right-3 top-3 z-[8] rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow sm:right-4 sm:top-4">Surface <select aria-label="Preview surface" value={surface} onChange={event=>setSurface(event.target.value as 'Wall'|'Floor')} className="ml-2 rounded border border-gray-300 bg-white px-2 py-1"><option value="Wall">Wall</option><option value="Floor">Floor</option></select></label>}
+          <div className="absolute right-3 top-3 z-[8] flex items-center gap-2 sm:right-4 sm:top-4">
+            <div className="flex items-center gap-1.5 rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow" title={`Tile dimensions: ${tile.size}`}>
+              <Grid size={14} className="text-teal-700"/>
+              <span className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">SIZE</span>
+              <span className="font-mono text-teal-900 font-bold">{formatTileSizeLabel(tile.size)}</span>
+            </div>
+            {tile.surface==='Both'&&<label className="rounded-md bg-white/95 px-3 py-2 text-xs font-medium text-gray-800 shadow">Surface <select aria-label="Preview surface" value={surface} onChange={event=>setSurface(event.target.value as 'Wall'|'Floor')} className="ml-2 rounded border border-gray-300 bg-white px-2 py-1"><option value="Wall">Wall</option><option value="Floor">Floor</option></select></label>}
+          </div>
           {!ready&&!error&&<div className="absolute inset-0 z-[7] flex items-center justify-center bg-gray-900/60 text-sm text-white">Loading the showroom…</div>}
           {error&&<div role="alert" className="absolute inset-x-4 top-20 z-[9] rounded-md bg-red-50 p-3 text-sm text-red-800 shadow">{error} You can exit preview at any time.</div>}
         </div>
@@ -93,12 +102,18 @@ export default function Admin() {
     if (loggedIn) loadData();
   }, [loggedIn]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email === 'admin@admin.com' && password === 'admin') {
-      setLoggedIn(true);
-    } else {
-      setNotice('Invalid credentials (use admin@admin.com / admin)');
+    setNotice('');
+    try {
+      const res = await verifyExploreCredentials(email.trim(), password);
+      if (res.role === 'admin') {
+        setLoggedIn(true);
+      } else {
+        setNotice('Access denied: Admin credentials required.');
+      }
+    } catch (err: any) {
+      setNotice(err.message || 'Invalid admin credentials.');
     }
   };
 
@@ -359,6 +374,7 @@ export default function Admin() {
                                     <span>{t.family}</span>
                                     {t.orientation&&<span>{t.orientation}</span>}
                                   </div>
+                                  {t.size&&<div className="text-xs text-teal-700 font-medium mt-0.5">📐 {t.size}</div>}
                                 </div>
                               </button>
                               <button onClick={() => handleDelete(t.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100" title="Delete Asset">
